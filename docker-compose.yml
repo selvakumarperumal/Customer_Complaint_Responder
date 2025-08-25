@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  app-dev:
+    build:
+      context: .
+      target: dev
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - .:/app
+    command: ["ipython", "app.py"]
+    stdin_open: true
+    tty: true
+
+  app-prod:
+    build:
+      context: .
+      target: prod
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    command: ["python", "app.py"]
