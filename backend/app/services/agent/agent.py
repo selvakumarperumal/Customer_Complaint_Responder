@@ -1,0 +1,69 @@
+from typing import TypedDict
+
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.graph import END, START, StateGraph
+from langgraph.checkpoint.memory import MemorySaver
+
+from app.core.config import settings
+from app.services.agent.prompts import category_prompt, response_prompt
+
+
+# Canonical LangGraph state pattern: TypedDict (NOT Pydantic BaseModel)
+class ComplaintState(TypedDict):
+    complaint: str
+    complaint_type: str
+    response: str
+
+
+# api_key is the preferred alias per langchain-google-genai reference docs
+_llm = ChatGoogleGenerativeAI(
+    model=settings.MODEL_NAME,
+    temperature=settings.TEMPERATURE,
+    api_key=settings.GOOGLE_API_KEY,
+)
+
+_classify_chain = category_prompt | _llm
+_response_chain = response_prompt | _llm
+
+
+def _node_classify(state: ComplaintState) -> dict:
+    """Classify the complaint into a category."""
+    ai_response = _classify_chain.invoke({"input": state["complaint"]})
+    # .text works for both plain-string (Gemini 2.x) and content-block list (Gemini 3+)
+    return {"complaint_type": ai_response.text.strip().lower()}
+
+
+def _node_respond(state: ComplaintState) -> dict:
+    """Generate a professional response to the complaint."""
+    ai_response = _response_chain.invoke({
+        "complaint": state["complaint"],
+        "complaint_type": state["complaint_type"],
+    })
+    return {"response": ai_response.text}
+
+
+_workflow = StateGraph(ComplaintState)
+_workflow.add_node("classify", _node_classify)
+_workflow.add_node("respond", _node_respond)
+_workflow.add_edge(START, "classify")
+_workflow.add_edge("classify", "respond")
+_workflow.add_edge("respond", END)
+
+_checkpointer = MemorySaver()
+_app = _workflow.compile(checkpointer=_checkpointer)
+
+
+def process_complaint(complaint_text: str, thread_id: str | None = None) -> dict:
+    """Run the LangGraph workflow and return classification + response."""
+    if thread_id is None:
+        thread_id = f"thread_{abs(hash(complaint_text)) % 100_000}"
+    config = {"configurable": {"thread_id": thread_id}}
+    result = _app.invoke(
+        {"complaint": complaint_text, "complaint_type": "", "response": ""},
+        config=config,
+    )
+    return {
+        "complaint": complaint_text,
+        "complaint_type": result["complaint_type"],
+        "response": result["response"],
+    }
