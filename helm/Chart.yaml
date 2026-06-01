@@ -1,0 +1,13 @@
+apiVersion: v2
+name: customer-complaint-responder
+description: FastAPI backend for the Customer Complaint Responder — classifies complaints and generates responses using LangGraph + Gemini.
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - fastapi
+  - langchain
+  - gemini
+  - eks
+maintainers:
+  - name: CCR Team

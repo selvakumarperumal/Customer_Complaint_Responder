@@ -1,0 +1,156 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Cluster / AWS settings — used by the SecretStore and ECR image path.
+# Set these to match your Terraform outputs.
+# ─────────────────────────────────────────────────────────────────────────────
+clusterName: ""     # e.g. ccr-dev  (terraform output -raw cluster_name)
+awsRegion: ap-south-1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Replica count
+# ─────────────────────────────────────────────────────────────────────────────
+replicaCount: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Container image
+# Set repository to the full ECR URL from Terraform output:
+#   terraform -chdir=infra output -raw ecr_repository_url
+# ─────────────────────────────────────────────────────────────────────────────
+image:
+  repository: ""   # e.g. 123456789.dkr.ecr.ap-south-1.amazonaws.com/ccr-dev/backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Name overrides
+# ─────────────────────────────────────────────────────────────────────────────
+nameOverride: ""
+fullnameOverride: ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Service account
+# Annotate with the IRSA role ARN from Terraform:
+#   terraform -chdir=infra output -raw backend_irsa_role_arn
+# ─────────────────────────────────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: backend
+  annotations: {}
+  # eks.amazonaws.com/role-arn: "arn:aws:iam::123456789:role/ccr-dev-backend-irsa-role"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pod metadata
+# ─────────────────────────────────────────────────────────────────────────────
+podAnnotations: {}
+podLabels: {}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Security contexts
+# ─────────────────────────────────────────────────────────────────────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 2000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Service
+# ─────────────────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ingress (requires an ingress controller such as ingress-nginx)
+# ─────────────────────────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: ccr.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: ccr-tls
+  #   hosts:
+  #     - ccr.example.com
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Resources
+# ─────────────────────────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Horizontal Pod Autoscaler
+# ─────────────────────────────────────────────────────────────────────────────
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Application environment variables (non-secret)
+# ─────────────────────────────────────────────────────────────────────────────
+env:
+  MODEL_NAME: gemini-2.0-flash
+  TEMPERATURE: "0.1"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# External Secrets Operator
+# Requires ESO to be installed in the cluster:
+#   helm install eso external-secrets/external-secrets -n external-secrets --create-namespace
+#
+# ESO uses the backend ServiceAccount's IRSA role to authenticate with AWS,
+# reads the API key from Secrets Manager, and creates a K8s Secret that the
+# pod mounts as the GOOGLE_API_KEY environment variable.
+# ─────────────────────────────────────────────────────────────────────────────
+externalSecret:
+  enabled: true
+  secretStoreName: aws-secretsmanager
+  refreshInterval: 1h
+  # Secrets Manager secret name from `terraform -chdir=infra output -raw api_key_secret_name`.
+  # Leave empty to auto-derive as "<clusterName>/google-api-key" (recommended).
+  remoteSecretName: ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Liveness / readiness probes
+# ─────────────────────────────────────────────────────────────────────────────
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 20
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scheduling
+# ─────────────────────────────────────────────────────────────────────────────
+nodeSelector: {}
+tolerations: []
+affinity: {}
