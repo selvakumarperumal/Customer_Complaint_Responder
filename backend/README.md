@@ -55,6 +55,22 @@ GEMINI_API_KEY=your_gemini_api_key_here
 # Optional Configurations (defaults shown)
 MODEL_NAME=gemini-3-flash-preview
 TEMPERATURE=0.1
+
+# Namecheap Private Email SMTP Settings (optional for email dispatch)
+SMTP_HOST=mail.privateemail.com
+SMTP_PORT=587
+SMTP_USERNAME=support@yourdomain.com
+SMTP_PASSWORD=your_private_email_password
+SMTP_FROM_EMAIL=support@yourdomain.com
+SMTP_FROM_NAME="Customer Support"
+
+# Namecheap Private Email IMAP Settings (optional for email ingestion)
+ENABLE_IMAP_POLLER=false
+IMAP_HOST=mail.privateemail.com
+IMAP_PORT=993
+IMAP_USERNAME=support@yourdomain.com
+IMAP_PASSWORD=your_private_email_password
+IMAP_POLL_INTERVAL=60
 ```
 
 | Environment Variable | Description | Default |
@@ -62,6 +78,18 @@ TEMPERATURE=0.1
 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | **Required**. Authentication key for Google Generative AI APIs. | *None* |
 | `MODEL_NAME` | The Gemini LLM model identifier. | `gemini-3-flash-preview` |
 | `TEMPERATURE` | Control creativity/determinism (0.0 = deterministic). | `0.1` |
+| `SMTP_HOST` | Namecheap SMTP server address. | `mail.privateemail.com` |
+| `SMTP_PORT` | SMTP port (use `465` for SSL/TLS, `587` for STARTTLS). | `587` |
+| `SMTP_USERNAME` | SMTP authentication email username. | *None* |
+| `SMTP_PASSWORD` | SMTP authentication email password. | *None* |
+| `SMTP_FROM_EMAIL` | Sender email address. | *None* |
+| `SMTP_FROM_NAME` | Display name of the sender. | `Customer Support` |
+| `ENABLE_IMAP_POLLER` | Whether to enable the background incoming email poller. | `false` |
+| `IMAP_HOST` | Namecheap IMAP server address. | `mail.privateemail.com` |
+| `IMAP_PORT` | IMAP port (typically `993` for SSL). | `993` |
+| `IMAP_USERNAME` | IMAP authentication email username (falls back to `SMTP_USERNAME` if unset). | *None* |
+| `IMAP_PASSWORD` | IMAP authentication email password (falls back to `SMTP_PASSWORD` if unset). | *None* |
+| `IMAP_POLL_INTERVAL` | Interval in seconds to search for new emails. | `60` |
 
 ---
 
@@ -130,16 +158,18 @@ Submits a customer complaint text to be categorized and answered.
   ```json
   {
     "complaint": "I received my order #10432 today but it was missing the power cable.",
-    "thread_id": "thread-12345"
+    "thread_id": "thread-12345",
+    "customer_email": "customer@example.com"
   }
   ```
-  *(Note: `thread_id` is optional and defaults to a hashed session identifier if omitted.)*
+  *(Note: `thread_id` and `customer_email` are optional.)*
 
 * **Response (`200 OK`)**:
   ```json
   {
     "complaint": "I received my order #10432 today but it was missing the power cable.",
     "complaint_type": "missing item",
-    "response": "Dear Customer,\n\nWe sincerely apologize for the inconvenience. We have initiated a replacement order for the missing power cable..."
+    "response": "Dear Customer,\n\nWe sincerely apologize for the inconvenience. We have initiated a replacement order for the missing power cable...",
+    "email_sent": true
   }
   ```
