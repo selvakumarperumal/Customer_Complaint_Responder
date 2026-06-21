@@ -28,14 +28,14 @@ fullnameOverride: ""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Service account
-# Annotate with the IRSA role ARN from Terraform:
-#   terraform -chdir=infra output -raw backend_irsa_role_arn
+# The ServiceAccount is created by Terraform (infra/addons.tf) with the
+# IRSA role annotation already set. Helm just references it by name.
+# Do NOT set create: true here — Terraform owns this object.
 # ─────────────────────────────────────────────────────────────────────────────
 serviceAccount:
-  create: true
-  name: backend
-  annotations: {}
-  # eks.amazonaws.com/role-arn: "arn:aws:iam::123456789:role/ccr-dev-backend-irsa-role"
+  create: false   # pre-created by Terraform with the IRSA annotation
+  name: backend   # must match var.backend_service_account in infra/variables.tf
+  annotations: {} # ignored when create: false
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pod metadata

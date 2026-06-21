@@ -111,10 +111,28 @@ variable "vpc_cni_version" {
   default     = ""
 }
 
-variable "enable_irsa" {
-  description = "Enable IAM Roles for Service Accounts (IRSA) via OIDC"
+variable "enable_pod_identity" {
+  description = "Install the EKS Pod Identity Agent and create IAM role + Pod Identity associations for the backend and ESO"
   type        = bool
   default     = true
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# External Secrets Operator — SA details for Pod Identity association
+# Must match the SA name/namespace used when installing ESO via Helm:
+#   helm install eso external-secrets/external-secrets \
+#     -n external-secrets --create-namespace
+# ─────────────────────────────────────────────────────────────────────────────
+variable "eso_namespace" {
+  description = "Namespace where External Secrets Operator is installed"
+  type        = string
+  default     = "external-secrets"
+}
+
+variable "eso_service_account" {
+  description = "ServiceAccount name used by the ESO controller pod"
+  type        = string
+  default     = "external-secrets"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

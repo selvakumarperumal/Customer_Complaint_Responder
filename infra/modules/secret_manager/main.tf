@@ -55,42 +55,36 @@ resource "aws_iam_policy" "read_api_key" {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# IRSA role — lets the backend Kubernetes service account assume this role
-# so the pod can call Secrets Manager without long-lived credentials
+# Pod Identity role — lets the backend pod (or ESO controller) assume this role
+# The trust policy uses the EKS pods service principal instead of OIDC:
+#   - No OIDC URL strings to manage
+#   - No annotation on the K8s ServiceAccount
+#   - Cluster / namespace / SA scoping is enforced by aws_eks_pod_identity_association
+#     (defined in infra/addons.tf), not by trust policy conditions
 # ─────────────────────────────────────────────────────────────────────────────
-locals {
-  # Strip the https:// prefix — the OIDC condition key uses the bare URL
-  oidc_url = replace(var.oidc_provider_url, "https://", "")
-}
-
 resource "aws_iam_role" "backend_sa" {
-  count = var.enable_irsa ? 1 : 0
+  count = var.enable_pod_identity ? 1 : 0
 
-  name        = "${var.cluster_name}-backend-sa-role"
-  description = "IRSA role for the CCR backend service account"
+  name        = "${var.cluster_name}-backend-role"
+  description = "Pod Identity role for the CCR backend — grants Secrets Manager access"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
         Effect    = "Allow"
-        Principal = { Federated = var.oidc_provider_arn }
-        Action    = "sts:AssumeRoleWithWebIdentity"
-        Condition = {
-          StringEquals = {
-            "${local.oidc_url}:sub" = "system:serviceaccount:${var.namespace}:${var.service_account_name}"
-            "${local.oidc_url}:aud" = "sts.amazonaws.com"
-          }
-        }
+        Principal = { Service = "pods.eks.amazonaws.com" }
+        # sts:TagSession is required by Pod Identity in addition to sts:AssumeRole
+        Action = ["sts:AssumeRole", "sts:TagSession"]
       }
     ]
   })
 
-  tags = merge(var.tags, { Name = "${var.cluster_name}-backend-sa-role" })
+  tags = merge(var.tags, { Name = "${var.cluster_name}-backend-role" })
 }
 
 resource "aws_iam_role_policy_attachment" "backend_sa_read_secret" {
-  count = var.enable_irsa ? 1 : 0
+  count = var.enable_pod_identity ? 1 : 0
 
   role       = aws_iam_role.backend_sa[0].name
   policy_arn = aws_iam_policy.read_api_key.arn

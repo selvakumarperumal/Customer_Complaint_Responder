@@ -137,17 +137,36 @@ resource "aws_eks_cluster" "main" {
 }
 
 data "tls_certificate" "cluster" {
-  count = var.enable_irsa ? 1 : 0
+  count = var.enable_pod_identity ? 1 : 0
   url   = aws_eks_cluster.main.identity[0].oidc[0].issuer
 }
 
 resource "aws_iam_openid_connect_provider" "eks_oidc_provider" {
-  count           = var.enable_irsa ? 1 : 0
+  count           = var.enable_pod_identity ? 1 : 0
   url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = [data.tls_certificate.cluster[0].certificates[0].sha1_fingerprint]
 
   tags = merge(var.tags, { Name = "${var.cluster_name}-oidc-provider" })
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EKS Pod Identity Agent
+# Required for aws_eks_pod_identity_association to work. The agent runs as a
+# DaemonSet and intercepts AWS credential requests from pods, exchanging the
+# pod's ServiceAccount token for short-lived IAM credentials.
+# ─────────────────────────────────────────────────────────────────────────────
+resource "aws_eks_addon" "pod_identity_agent" {
+  count = var.enable_pod_identity ? 1 : 0
+
+  cluster_name                = aws_eks_cluster.main.name
+  addon_name                  = "eks-pod-identity-agent"
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [aws_eks_node_group.main]
+
+  tags = merge(var.tags, { Name = "${var.cluster_name}-pod-identity-agent" })
 }
 
 resource "aws_eks_addon" "coredns" {

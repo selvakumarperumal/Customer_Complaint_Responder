@@ -7,6 +7,7 @@ A FastAPI backend that classifies customer complaints and generates professional
 ## Table of Contents
 
 - [Architecture](#architecture)
+- [How OIDC and IRSA work together](#how-oidc-and-irsa-work-together)
 - [Repository Structure](#repository-structure)
 - [Prerequisites](#prerequisites)
 - [Local Development](#local-development)
@@ -41,20 +42,82 @@ Google Gemini (via GOOGLE_API_KEY)
 ComplaintResponse { complaint_type, response }
 ```
 
-**Secret flow in production (no secrets in code or Helm values):**
+**Secret flow in production — the API key never touches Helm values or your shell:**
 
 ```
-terraform apply -var google_api_key=...
+terraform apply -var google_api_key=AIza...
        │
-       ▼  stores {"GOOGLE_API_KEY": "..."} as JSON
+       ▼  stores {"GOOGLE_API_KEY": "AIza..."} as JSON
 AWS Secrets Manager  "ccr-dev/google-api-key"
        │
-       ▼  External Secrets Operator (IRSA auth)
-Kubernetes Secret  "<release>-api-key"
+       ▼  External Secrets Operator reads it using the pod's IRSA credentials
+Kubernetes Secret  "ccr-customer-complaint-responder-api-key"  (created by ESO)
        │
-       ▼  mounted as env var
-Pod  GOOGLE_API_KEY=...
+       ▼  Deployment mounts it as an environment variable
+Pod  GOOGLE_API_KEY=AIza...
 ```
+
+---
+
+## How OIDC and IRSA work together
+
+> **TL;DR — OIDC is the protocol. IRSA is the pattern that uses it. The IAM role is created by Terraform; the Kubernetes ServiceAccount is created by Helm. This split is intentional and correct.**
+
+### The concepts
+
+| Term | What it is |
+|---|---|
+| **OIDC provider** | A trust anchor registered in AWS IAM that says "I trust tokens issued by this EKS cluster" |
+| **IRSA role** | An IAM role whose trust policy says "only allow this specific Kubernetes service account to assume me" |
+| **ServiceAccount annotation** | `eks.amazonaws.com/role-arn: <role-arn>` — tells EKS which IRSA role to exchange tokens for |
+
+### Who creates what, and why
+
+```
+Terraform  (AWS resources + platform K8s objects — infra/main.tf + infra/addons.tf)
+  ├─ aws_iam_openid_connect_provider   ← OIDC provider
+  ├─ aws_iam_role.backend_sa           ← IRSA role (trust policy scoped to the SA)
+  ├─ aws_iam_role_policy_attachment    ← grants secretsmanager:GetSecretValue
+  ├─ aws_iam_role_policy_attachment    ← grants ECR pull permissions
+  └─ kubernetes_service_account_v1     ← SA pre-annotated with the IRSA role ARN
+                                          (created AFTER EKS via depends_on)
+
+Helm  (app workload objects — scripts/deploy.sh)
+  ├─ Deployment
+  ├─ Service
+  ├─ ESO SecretStore + ExternalSecret
+  └─ (references the pre-existing SA — does NOT create it)
+```
+
+**Why create the Kubernetes ServiceAccount in Terraform (using the `kubernetes` provider)?**
+
+- **Single `terraform apply`** creates everything end-to-end. By the time you run `helm upgrade`, the SA already exists with the correct IRSA annotation — no flag needed.
+- **No annotation to pass at deploy time** — `helm/values.yaml` has `serviceAccount.create: false`. Helm just references the SA by name. You can't accidentally forget or misspell the role ARN.
+- **Clean lifecycle** — `terraform destroy` removes the SA alongside the IRSA role. `helm uninstall` removes the app workloads. No conflicts.
+- **How chicken-and-egg is solved** — The `kubernetes` provider uses `exec { command = "aws" args = ["eks", "get-token", ...] }`. The token is fetched at *apply time*, not at init/plan time. Terraform's dependency graph ensures EKS is created first; only then does it connect to Kubernetes to create the SA.
+
+### What happens at runtime (inside the pod)
+
+```
+1. EKS injects a short-lived OIDC token onto the pod via the SA volume
+   (no passwords or long-lived credentials stored anywhere)
+
+2. ESO (running in the cluster) calls STS:AssumeRoleWithWebIdentity
+   using that token + the IRSA role ARN from the SA annotation
+
+3. STS validates:
+   "Is this token from our trusted OIDC provider?"       → yes
+   "Is the subject claim system:serviceaccount:default:backend?"  → yes
+   → returns temporary credentials (15 min TTL, auto-refreshed)
+
+4. ESO uses those credentials to call secretsmanager:GetSecretValue
+   → creates the Kubernetes Secret with GOOGLE_API_KEY
+   → the pod reads it as a normal environment variable
+```
+
+### Why the ECR URL is NOT stored in Secrets Manager
+
+The ECR URL (`123456789.dkr.ecr.ap-south-1.amazonaws.com/ccr-dev/backend`) is **not a secret** — it's just config derived from your AWS account ID and region. Storing it in Secrets Manager would be wrong (Secrets Manager is for sensitive credentials) and unnecessary. The deploy script reads it directly from `terraform output`.
 
 ---
 
@@ -71,27 +134,30 @@ Pod  GOOGLE_API_KEY=...
 │   ├── Dockerfile
 │   ├── main.py               # Uvicorn entrypoint
 │   └── pyproject.toml
-├── infra/                    # Terraform — AWS infra (VPC, EKS, ECR, Secrets Manager)
+├── infra/                    # Terraform — VPC, EKS, ECR, Secrets Manager, IRSA
 │   ├── modules/
 │   │   ├── vpc/
-│   │   ├── iam/
-│   │   ├── eks/
-│   │   ├── ecr/
-│   │   └── secret_manager/   # Secrets Manager secret + IRSA role for the backend SA
+│   │   ├── iam/              # EKS cluster + node group roles
+│   │   ├── eks/              # Cluster, node groups, OIDC provider
+│   │   ├── ecr/              # Container registry + ECR pull IAM policy
+│   │   └── secret_manager/   # Secrets Manager secret + IRSA role (created here)
 │   ├── environments/
-│   │   ├── dev.tfvars
+│   │   ├── dev.tfvars        # Dev config (no secrets — api key via TF_VAR_)
 │   │   └── prod.tfvars
 │   ├── main.tf
 │   ├── variables.tf
 │   └── outputs.tf
-└── helm/                     # Helm chart for the backend
-    ├── templates/
-    │   ├── deployment.yaml
-    │   ├── serviceaccount.yaml   # IRSA annotation set at deploy time
-    │   ├── secretstore.yaml      # ESO: how to connect to AWS
-    │   ├── externalsecret.yaml   # ESO: which secret to fetch → creates K8s Secret
-    │   └── ...
-    └── values.yaml
+├── helm/                     # Helm chart for the backend
+│   ├── templates/
+│   │   ├── deployment.yaml
+│   │   ├── serviceaccount.yaml   # IRSA annotation applied here at deploy time
+│   │   ├── secretstore.yaml      # ESO: how to connect to AWS (uses IRSA auth)
+│   │   ├── externalsecret.yaml   # ESO: which secret to fetch → creates K8s Secret
+│   │   └── ...
+│   └── values.yaml
+└── scripts/
+    ├── build-push.sh         # Build Docker image and push to ECR
+    └── deploy.sh             # Deploy Helm chart (reads all values from terraform output)
 ```
 
 ---
@@ -113,36 +179,28 @@ Pod  GOOGLE_API_KEY=...
 ## Local Development
 
 ```bash
-# Clone and enter the backend directory
 cd backend
 
-# Install dependencies with uv
+# Install dependencies
 uv sync
 
-# Create a .env file with your Gemini API key
+# Create a .env file (the app also accepts GEMINI_API_KEY as an alias)
 echo "GOOGLE_API_KEY=AIza..." > .env
-# or use the alias the app also accepts:
-echo "GEMINI_API_KEY=AIza..." > .env
 
-# Run the dev server (hot-reload enabled)
+# Start the dev server with hot-reload
 uv run python main.py
 ```
 
-The API is available at **http://localhost:8000**  
-Interactive docs: **http://localhost:8000/docs**
+API: **http://localhost:8000** — Docs: **http://localhost:8000/docs**
 
 ---
 
 ## Running with Docker
 
 ```bash
-# Build the image
 docker build -t ccr-backend ./backend
 
-# Run with the API key injected as an env var
-docker run -p 8000:8000 \
-  -e GOOGLE_API_KEY=AIza... \
-  ccr-backend
+docker run -p 8000:8000 -e GOOGLE_API_KEY=AIza... ccr-backend
 ```
 
 ---
@@ -151,50 +209,34 @@ docker run -p 8000:8000 \
 
 ### 1 — Provision AWS Infrastructure
 
-Terraform creates the VPC, EKS cluster, ECR repository, Secrets Manager secret, and the IRSA role that lets the backend pod read that secret.
+One `terraform apply` creates everything: VPC, EKS cluster, ECR repository, Secrets Manager secret, OIDC provider, and the IRSA role. Nothing needs to be set up manually afterward.
 
 ```bash
 cd infra
 
-# Initialise providers and modules
 terraform init
 
-# Review what will be created (dev environment)
-export TF_VAR_google_api_key="AIza..."        # never hard-code this
-terraform plan -var-file=environments/dev.tfvars
+# The API key is the only secret — pass it via env var, never in tfvars files
+export TF_VAR_google_api_key="AIza..."
 
-# Apply
+terraform plan -var-file=environments/dev.tfvars
 terraform apply -var-file=environments/dev.tfvars
 ```
 
-> **Note:** The `google_api_key` is only needed during `terraform apply`. After that it lives in Secrets Manager — you never pass it to Helm or the pod directly.
-
-Capture the outputs you'll need for the next steps:
-
-```bash
-export ECR_URL=$(terraform output -raw ecr_repository_url)
-export IRSA_ARN=$(terraform output -raw backend_irsa_role_arn)
-export CLUSTER=$(terraform output -raw cluster_name)
-export AWS_REGION=$(terraform output -raw aws_region)
-
-# Update your local kubeconfig
-aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
-```
+After `apply`, the API key is stored in Secrets Manager and the IRSA role exists. You never need to handle the key again.
 
 ---
 
 ### 2 — Build and Push the Docker Image
 
+The script reads the ECR URL and region directly from `terraform output` — no copy-paste needed:
+
 ```bash
-# Authenticate Docker with ECR
-aws ecr get-login-password --region "$AWS_REGION" \
-  | docker login --username AWS --password-stdin "$ECR_URL"
+# Default tag is the git short SHA (e.g. a3f1c2d)
+./scripts/build-push.sh
 
-# Build and tag
-docker build -t "$ECR_URL:v1.0.0" ./backend
-
-# Push
-docker push "$ECR_URL:v1.0.0"
+# Or specify a tag
+IMAGE_TAG=v1.0.0 ./scripts/build-push.sh
 ```
 
 ---
@@ -203,40 +245,40 @@ docker push "$ECR_URL:v1.0.0"
 
 #### Install External Secrets Operator (once per cluster)
 
-ESO is a cluster-level dependency — install it before the app chart.
+ESO is a cluster-level dependency. Install it before the app chart.
 
 ```bash
 helm repo add external-secrets https://charts.external-secrets.io
 helm repo update
 
 helm install eso external-secrets/external-secrets \
-  -n external-secrets --create-namespace \
-  --wait
+  -n external-secrets --create-namespace --wait
 ```
 
-#### Install the app chart
+#### Deploy the app
+
+The ServiceAccount already exists in the cluster (Terraform created it). The script only needs the image tag, cluster name, region, and ECR URL:
 
 ```bash
-helm upgrade --install ccr ./helm \
-  --namespace default \
-  --set clusterName="$CLUSTER" \
-  --set awsRegion="$AWS_REGION" \
-  --set image.repository="$ECR_URL" \
-  --set image.tag="v1.0.0" \
-  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$IRSA_ARN" \
-  --wait
+IMAGE_TAG=v1.0.0 ./scripts/deploy.sh
 ```
 
-#### Verify the deployment
+What the script does internally:
+1. Runs `terraform output` to get cluster name, region, and ECR URL
+2. Updates your local kubeconfig (`aws eks update-kubeconfig`)
+3. Runs `helm upgrade --install` — no IRSA annotation needed (SA is pre-annotated by Terraform)
+4. Prints ESO sync status and pod status after deploy
+
+#### Verify manually (optional)
 
 ```bash
-# ESO should sync the secret within seconds — look for READY=True
+# ESO sync status — look for READY=True
 kubectl get externalsecret -n default
 
-# Confirm the K8s Secret was created by ESO
+# K8s Secret created by ESO (you never created this — ESO did)
 kubectl get secret ccr-customer-complaint-responder-api-key -n default
 
-# Check the pod is running
+# Pod status
 kubectl get pods -n default
 kubectl logs -l app.kubernetes.io/name=customer-complaint-responder -n default
 ```
@@ -247,9 +289,7 @@ kubectl logs -l app.kubernetes.io/name=customer-complaint-responder -n default
 
 ### `POST /api/v1/complaints`
 
-Classify a complaint and generate a response.
-
-**Request body:**
+**Request:**
 ```json
 {
   "complaint": "My order arrived damaged and customer service ignored my emails.",
@@ -277,15 +317,17 @@ Returns `{"status": "ok"}` — used by Kubernetes liveness and readiness probes.
 To rotate the Gemini API key with zero downtime:
 
 ```bash
-# 1. Update the secret in Secrets Manager via Terraform
+# 1. Update the secret via Terraform (the only place the key ever lives)
 export TF_VAR_google_api_key="AIza...new-key..."
-terraform apply -var-file=environments/dev.tfvars
+terraform apply -var-file=environments/dev.tfvars -chdir=infra
 
-# 2. ESO automatically syncs the new value within 1 hour.
-#    To force an immediate sync:
+# 2. ESO syncs the new value automatically within 1h.
+#    To force immediate sync:
 kubectl annotate externalsecret ccr-customer-complaint-responder-api-key \
   force-sync=$(date +%s) --overwrite -n default
 
-# 3. Restart the pod to pick up the new env var
+# 3. Restart the pod to pick up the updated env var
 kubectl rollout restart deployment/ccr-customer-complaint-responder -n default
 ```
+
+---

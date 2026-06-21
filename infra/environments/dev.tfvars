@@ -30,7 +30,7 @@ service_ipv4_cidr_block = "172.20.0.0/16"
 endpoint_public_access  = true
 endpoint_private_access = true
 public_access_cidrs     = ["0.0.0.0/0"]
-enable_irsa             = true
+enable_pod_identity     = true
 
 core_dns_version   = ""
 kube_proxy_version = ""

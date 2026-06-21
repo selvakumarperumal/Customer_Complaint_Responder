@@ -19,13 +19,13 @@ output "cluster_version" {
 }
 
 output "oidc_provider_arn" {
-  description = "ARN of the OIDC provider (for IRSA)"
-  value       = var.enable_irsa ? aws_iam_openid_connect_provider.eks_oidc_provider[0].arn : ""
+  description = "ARN of the OIDC provider (kept for external OIDC federation e.g. GitHub Actions)"
+  value       = var.enable_pod_identity ? aws_iam_openid_connect_provider.eks_oidc_provider[0].arn : ""
 }
 
 output "oidc_provider_url" {
-  description = "URL of the OIDC provider (for IRSA trust policies)"
-  value       = var.enable_irsa ? aws_eks_cluster.main.identity[0].oidc[0].issuer : ""
+  description = "URL of the OIDC provider"
+  value       = var.enable_pod_identity ? aws_eks_cluster.main.identity[0].oidc[0].issuer : ""
 }
 
 output "cluster_security_group_id" {

@@ -90,8 +90,8 @@ variable "vpc_cni_role_arn" {
   type        = string
 }
 
-variable "enable_irsa" {
-  description = "Enable IAM Roles for Service Accounts (IRSA)"
+variable "enable_pod_identity" {
+  description = "Install the EKS Pod Identity Agent addon and enable the OIDC provider (kept for GitHub Actions / external OIDC)"
   type        = bool
   default     = true
 }

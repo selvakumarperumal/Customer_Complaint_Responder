@@ -57,14 +57,14 @@ module "eks" {
   kube_proxy_version      = var.kube_proxy_version
   vpc_cni_version         = var.vpc_cni_version
   vpc_cni_role_arn        = ""
-  enable_irsa             = var.enable_irsa
+  enable_pod_identity     = var.enable_pod_identity
   tags                    = var.tags
 
   depends_on = [module.iam]
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Secrets Manager — Google/Gemini API key + IRSA role for backend pod
+# Secrets Manager — Google/Gemini API key + Pod Identity role for backend/ESO
 # ─────────────────────────────────────────────────────────────────────────────
 module "secret_manager" {
   source = "./modules/secret_manager"
@@ -72,11 +72,7 @@ module "secret_manager" {
   cluster_name         = var.cluster_name
   secret_name          = "${var.cluster_name}/google-api-key"
   secret_value         = var.google_api_key
-  enable_irsa          = var.enable_irsa
-  oidc_provider_arn    = module.eks.oidc_provider_arn
-  oidc_provider_url    = module.eks.oidc_provider_url
-  namespace            = var.backend_namespace
-  service_account_name = var.backend_service_account
+  enable_pod_identity  = var.enable_pod_identity
   tags                 = var.tags
 
   depends_on = [module.eks]
@@ -97,9 +93,9 @@ module "ecr" {
 # This allows the backend service account to authenticate with ECR in addition
 # to reading the API key secret — both permissions land on a single IRSA role.
 resource "aws_iam_role_policy_attachment" "backend_ecr_pull" {
-  count = var.enable_irsa ? 1 : 0
+  count = var.enable_pod_identity ? 1 : 0
 
-  role       = module.secret_manager.backend_irsa_role_name
+  role       = module.secret_manager.backend_role_name
   policy_arn = module.ecr.ecr_pull_policy_arn
 
   depends_on = [module.secret_manager, module.ecr]

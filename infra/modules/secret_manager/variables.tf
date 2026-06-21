@@ -15,34 +15,10 @@ variable "secret_value" {
   sensitive   = true
 }
 
-variable "enable_irsa" {
-  description = "Create an IRSA role so the backend pod can read the secret"
+variable "enable_pod_identity" {
+  description = "Create the IAM role used by Pod Identity associations for the backend and ESO"
   type        = bool
   default     = true
-}
-
-variable "oidc_provider_arn" {
-  description = "ARN of the EKS OIDC provider (required when enable_irsa = true)"
-  type        = string
-  default     = ""
-}
-
-variable "oidc_provider_url" {
-  description = "URL of the EKS OIDC provider, with https:// prefix (required when enable_irsa = true)"
-  type        = string
-  default     = ""
-}
-
-variable "namespace" {
-  description = "Kubernetes namespace where the backend service account lives"
-  type        = string
-  default     = "default"
-}
-
-variable "service_account_name" {
-  description = "Name of the Kubernetes service account for the backend"
-  type        = string
-  default     = "backend"
 }
 
 variable "tags" {

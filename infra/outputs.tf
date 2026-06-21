@@ -1,4 +1,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
+# Region — exposed so scripts/deploy.sh can read it without parsing tfvars
+# ─────────────────────────────────────────────────────────────────────────────
+output "aws_region" {
+  description = "AWS region where all resources are deployed"
+  value       = var.aws_region
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # VPC
 # ─────────────────────────────────────────────────────────────────────────────
 output "vpc_id" {
@@ -71,9 +79,9 @@ output "api_key_secret_name" {
   value       = module.secret_manager.secret_name
 }
 
-output "backend_irsa_role_arn" {
-  description = "ARN of the IRSA role to annotate on the backend Kubernetes service account"
-  value       = module.secret_manager.backend_irsa_role_arn
+output "backend_role_arn" {
+  description = "ARN of the Pod Identity role for the backend / ESO service account"
+  value       = module.secret_manager.backend_role_arn
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
