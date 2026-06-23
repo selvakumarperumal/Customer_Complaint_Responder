@@ -110,10 +110,11 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
         raise ValueError("IMAP settings are not configured in worker.")
 
     try:
-        # ── 1. Fetch email from IMAP on-demand ──────────────────────────────
+        # ── 1. Fetch email and its thread history from IMAP on-demand ────────
         with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
             settings.IMAP_USERNAME, settings.IMAP_PASSWORD
         ) as mailbox:
+            # Fetch the target email by UID
             messages = list(mailbox.fetch(AND(uid=uid)))
             if not messages:
                 logger.warning("Email with UID %s not found in mailbox — skipping.", uid)
@@ -123,13 +124,6 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
             msg = messages[0]
             from_email = msg.from_
             subject = msg.subject or "(no subject)"
-            body = (
-                msg.text.strip()
-                if msg.text
-                else msg.html.strip()
-                if msg.html
-                else ""
-            )
             message_id = msg.obj.get("Message-ID", "").strip()
             references = msg.obj.get("References", "").strip()
             in_reply_to = msg.obj.get("In-Reply-To", "").strip()
@@ -141,7 +135,41 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
                 or f"thread_{abs(hash(from_email + subject)) % 100_000}"
             )
 
-        logger.info("Fetched email from %s (subject=%r, message_id=%s)", from_email, subject, message_id)
+            # Normalize the subject to find all messages in the same conversation thread
+            def normalize_subject(subj: str) -> str:
+                s = subj.lower()
+                for prefix in ["re:", "fwd:", "fw:"]:
+                    if s.startswith(prefix):
+                        s = s[len(prefix):].strip()
+                return s.strip()
+
+            norm_subj = normalize_subject(subject)
+
+            # Fetch all messages in the current folder (INBOX) matching this normalized subject
+            # This fetches the entire history of customer emails in this thread
+            thread_messages = list(mailbox.fetch(AND(subject=norm_subj)))
+            thread_messages.sort(key=lambda m: m.date or m.date_str)
+
+            # Construct the chronological thread history
+            thread_history = ""
+            for m in thread_messages:
+                m_sender = m.from_
+                m_date = m.date.strftime("%Y-%m-%d %H:%M:%S") if m.date else "Unknown Date"
+                m_body = m.text.strip() if m.text else m.html.strip() if m.html else ""
+                
+                # Clean body part: remove lines starting with '>' (quoted reply history)
+                # to prevent duplicating the conversation history in the prompt.
+                clean_lines = [line for line in m_body.splitlines() if not line.strip().startswith(">")]
+                clean_body = "\n".join(clean_lines).strip()
+                
+                thread_history += f"From: {m_sender} (Date: {m_date})\nSubject: {m.subject}\nContent:\n{clean_body}\n\n---\n\n"
+
+        logger.info(
+            "Fetched thread history for subject=%r (%d message(s), message_id=%s)",
+            subject,
+            len(thread_messages),
+            message_id,
+        )
 
         # ── 2. Dedupe check ─────────────────────────────────────────────────
         if message_id:
@@ -156,14 +184,14 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
             logger.warning("Email has no Message-ID header — dedupe not possible.")
 
         # ── 3. Validate ─────────────────────────────────────────────────────
-        if not from_email or not body:
-            logger.warning("Missing from_email or body — skipping.")
+        if not from_email or not thread_history.strip():
+            logger.warning("Missing from_email or thread history — skipping.")
             r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
             return
 
         # ── 4. Run LangGraph AI agent ────────────────────────────────────────
         logger.info("Running LangGraph complaint handler for thread_id=%s", thread_id)
-        result = process_complaint(body, thread_id=thread_id)
+        result = process_complaint(thread_history, thread_id=thread_id)
         logger.info("Classified as: %s", result["complaint_type"])
 
         # ── 5. Build reply subject ──────────────────────────────────────────
