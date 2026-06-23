@@ -6,6 +6,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 def send_support_email(
     to_email: str,
     subject: str,
@@ -29,7 +30,7 @@ def send_support_email(
             msg["In-Reply-To"] = in_reply_to
         if references:
             msg["References"] = references
-        
+
         msg.attach(MIMEText(body_text, "plain"))
 
         # Connect and send
@@ -42,8 +43,8 @@ def send_support_email(
         server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
         server.send_message(msg)
         server.quit()
-        logger.info(f"Successfully sent email to {to_email}")
+        logger.info("Successfully sent email to %s", to_email)
         return True
     except Exception as e:
-        logger.error(f"Failed to send email via SMTP: {e}")
+        logger.error("Failed to send email via SMTP: %s", e)
         return False

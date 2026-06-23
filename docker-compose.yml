@@ -1,0 +1,70 @@
+version: "3.9"
+
+networks:
+  ccr-net:
+    driver: bridge
+
+volumes:
+  redis-data:
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. Redis — message broker (Streams) + dedupe store
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes   # persist stream data across restarts
+    networks:
+      - ccr-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # 2. Poller — ONE replica only.
+  #    Polls Namecheap IMAP, marks emails SEEN, publishes to Redis Stream.
+  # ---------------------------------------------------------------------------
+  poller:
+    build:
+      context: ./apps/poller
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ccr-net
+    deploy:
+      replicas: 1   # NEVER scale above 1 — IMAP has no built-in locking
+
+  # ---------------------------------------------------------------------------
+  # 3. Worker — safe to scale.
+  #    Reads from Redis Stream, runs LangGraph AI agent, sends SMTP reply.
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      context: ./apps/worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ccr-net
+    deploy:
+      replicas: 2   # scale freely — stream consumer group handles deduplication
