@@ -33,7 +33,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 
-# Include hostname in every log line so you can distinguish replicas
 _hostname = socket.gethostname()
 logging.getLogger().handlers[0].setFormatter(
     logging.Formatter(
@@ -58,11 +57,6 @@ def _build_redis_client() -> redis.Redis:
 
 
 def _ensure_consumer_group(r: redis.Redis) -> None:
-    """
-    Create the consumer group if it doesn't exist yet.
-    MKSTREAM creates the stream key if it's also missing.
-    '$' means: only process NEW messages added after group creation.
-    """
     try:
         r.xgroup_create(
             name=settings.REDIS_STREAM_NAME,
@@ -77,7 +71,6 @@ def _ensure_consumer_group(r: redis.Redis) -> None:
         )
     except redis.exceptions.ResponseError as exc:
         if "BUSYGROUP" in str(exc):
-            # Group already exists — this is fine (other worker replica created it first)
             logger.debug("Consumer group already exists — OK.")
         else:
             raise
@@ -104,17 +97,14 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
         r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
         return
 
-    # Check that IMAP config is available
     if not (settings.IMAP_USERNAME and settings.IMAP_PASSWORD):
         logger.error("IMAP settings are not configured in worker — cannot fetch email %s", uid)
         raise ValueError("IMAP settings are not configured in worker.")
 
     try:
-        # ── 1. Fetch email and its thread history from IMAP on-demand ────────
         with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
             settings.IMAP_USERNAME, settings.IMAP_PASSWORD
         ) as mailbox:
-            # Fetch the target email by UID
             messages = list(mailbox.fetch(AND(uid=uid)))
             if not messages:
                 logger.warning("Email with UID %s not found in mailbox — skipping.", uid)
@@ -135,7 +125,6 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
                 or f"thread_{abs(hash(from_email + subject)) % 100_000}"
             )
 
-            # Normalize the subject to find all messages in the same conversation thread
             def normalize_subject(subj: str) -> str:
                 s = subj.lower()
                 for prefix in ["re:", "fwd:", "fw:"]:
@@ -145,20 +134,15 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
 
             norm_subj = normalize_subject(subject)
 
-            # Fetch all messages in the current folder (INBOX) matching this normalized subject
-            # This fetches the entire history of customer emails in this thread
             thread_messages = list(mailbox.fetch(AND(subject=norm_subj)))
             thread_messages.sort(key=lambda m: m.date or m.date_str)
 
-            # Construct the chronological thread history
             thread_history = ""
             for m in thread_messages:
                 m_sender = m.from_
                 m_date = m.date.strftime("%Y-%m-%d %H:%M:%S") if m.date else "Unknown Date"
                 m_body = m.text.strip() if m.text else m.html.strip() if m.html else ""
                 
-                # Clean body part: remove lines starting with '>' (quoted reply history)
-                # to prevent duplicating the conversation history in the prompt.
                 clean_lines = [line for line in m_body.splitlines() if not line.strip().startswith(">")]
                 clean_body = "\n".join(clean_lines).strip()
                 
@@ -171,7 +155,6 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
             message_id,
         )
 
-        # ── 2. Dedupe check ─────────────────────────────────────────────────
         if message_id:
             key = _dedupe_key(message_id)
             if r.exists(key):
@@ -183,21 +166,17 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
         else:
             logger.warning("Email has no Message-ID header — dedupe not possible.")
 
-        # ── 3. Validate ─────────────────────────────────────────────────────
         if not from_email or not thread_history.strip():
             logger.warning("Missing from_email or thread history — skipping.")
             r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
             return
 
-        # ── 4. Run LangGraph AI agent ────────────────────────────────────────
         logger.info("Running LangGraph complaint handler for thread_id=%s", thread_id)
         result = process_complaint(thread_history, thread_id=thread_id)
         logger.info("Classified as: %s", result["complaint_type"])
 
-        # ── 5. Build reply subject ──────────────────────────────────────────
         reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
 
-        # ── 6. Send SMTP reply ──────────────────────────────────────────────
         sent = send_support_email(
             to_email=from_email,
             subject=reply_subject,
@@ -206,12 +185,10 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
             references=f"{references} {message_id}".strip() or None,
         )
 
-        # ── 7. Mark as replied in Redis ─────────────────────────────────────
         if sent and message_id:
             r.set(_dedupe_key(message_id), "1", ex=settings.REDIS_DEDUPE_TTL)
             logger.info("Marked Message-ID %s as replied (TTL=%ds).", message_id, settings.REDIS_DEDUPE_TTL)
 
-        # ── 8. Success ACK ──────────────────────────────────────────────────
         r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
         logger.info("Successfully processed and ACKed stream entry %s", stream_entry_id)
 
@@ -225,8 +202,6 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
 
 def run() -> None:
     """Consume the Redis Stream forever."""
-
-    # Retry Redis connection on startup (Redis container may not be ready yet)
     r: redis.Redis | None = None
     while r is None:
         try:
@@ -246,22 +221,17 @@ def run() -> None:
 
     while True:
         try:
-            # XREADGROUP: block up to 5 seconds waiting for a new message.
-            # ">" means "give me messages not yet delivered to any consumer."
-            # COUNT 10 means process up to 10 emails per batch.
             response = r.xreadgroup(
                 groupname=settings.REDIS_CONSUMER_GROUP,
                 consumername=_hostname,
                 streams={settings.REDIS_STREAM_NAME: ">"},
                 count=10,
-                block=5000,  # ms
+                block=5000,
             )
 
             if not response:
-                # Timeout — no new messages, loop back
                 continue
 
-            # response shape: [(stream_name, [(entry_id, fields_dict), ...])]
             for _stream_name, entries in response:
                 for entry_id, fields in entries:
                     _handle_message(r, entry_id, fields)

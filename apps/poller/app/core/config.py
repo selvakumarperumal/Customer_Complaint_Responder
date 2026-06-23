@@ -3,14 +3,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # Namecheap IMAP Settings
     IMAP_HOST: str = "mail.privateemail.com"
     IMAP_PORT: int = 993
     IMAP_USERNAME: str | None = None
     IMAP_PASSWORD: str | None = None
-    IMAP_POLL_INTERVAL: int = 60  # seconds between inbox checks
+    IMAP_POLL_INTERVAL: int = 60
 
-    # Redis Settings
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_STREAM_NAME: str = "email:inbound"
 

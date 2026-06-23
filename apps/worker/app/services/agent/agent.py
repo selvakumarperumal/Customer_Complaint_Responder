@@ -7,14 +7,12 @@ from app.core.config import settings
 from app.services.agent.prompts import category_prompt, response_prompt
 
 
-# Canonical LangGraph state pattern: TypedDict (NOT Pydantic BaseModel)
 class ComplaintState(TypedDict):
     complaint: str
     complaint_type: str
     response: str
 
 
-# api_key is the preferred alias per langchain-google-genai reference docs
 _llm = ChatGoogleGenerativeAI(
     model=settings.MODEL_NAME,
     temperature=settings.TEMPERATURE,
@@ -28,7 +26,6 @@ _response_chain = response_prompt | _llm
 def _node_classify(state: ComplaintState) -> dict:
     """Classify the complaint into a category."""
     ai_response = _classify_chain.invoke({"input": state["complaint"]})
-    # .text works for both plain-string (Gemini 2.x) and content-block list (Gemini 3+)
     return {"complaint_type": ai_response.text.strip().lower()}
 
 

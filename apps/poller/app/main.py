@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 def _build_redis_client() -> redis.Redis:
     """Create and return a Redis client with connection retry."""
     client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-    # Ping to verify connectivity on startup
     client.ping()
     logger.info("Connected to Redis at %s", settings.REDIS_URL)
     return client
@@ -56,7 +55,6 @@ def poll_once(r: redis.Redis) -> int:
         with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
             username, password
         ) as mailbox:
-            # Fetch UIDs of all unseen emails
             unseen_uids = mailbox.uids(AND(seen=False))
             if not unseen_uids:
                 return 0
@@ -66,10 +64,7 @@ def poll_once(r: redis.Redis) -> int:
             for uid in unseen_uids:
                 try:
                     payload = {"uid": uid}
-                    # Push UID to the stream
                     stream_id = r.xadd(settings.REDIS_STREAM_NAME, payload)
-                    
-                    # Successfully added to Redis stream, now mark SEEN in IMAP
                     mailbox.flag(uid, MailMessageFlags.SEEN, True)
                     
                     published += 1
@@ -85,7 +80,6 @@ def poll_once(r: redis.Redis) -> int:
 
 def run() -> None:
     """Main loop — poll forever."""
-    # Retry Redis connection on startup (Redis may not be ready yet)
     r: redis.Redis | None = None
     while r is None:
         try:

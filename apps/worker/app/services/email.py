@@ -20,7 +20,6 @@ def send_support_email(
         return False
 
     try:
-        # Create message
         msg = MIMEMultipart()
         msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
         msg["To"] = to_email
@@ -33,7 +32,6 @@ def send_support_email(
 
         msg.attach(MIMEText(body_text, "plain"))
 
-        # Connect and send
         if settings.SMTP_PORT == 465:
             server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
         else:
