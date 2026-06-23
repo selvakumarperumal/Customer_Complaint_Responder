@@ -43,10 +43,11 @@ graph TD
 
 ---
 
-## Script & Code Breakdown
+## Detailed Code & Snippet Breakdown
 
 ### 1. Configuration: `app/core/config.py`
-This script defines the configuration settings for the poller service using **Pydantic Settings**. It automatically reads values from environment variables or loads them from the shared `.env` file at the root.
+
+This script handles the microservice configuration using Pydantic Settings.
 
 ```python
 from pydantic import AliasChoices, Field
@@ -71,43 +72,21 @@ class Settings(BaseSettings):
 settings = Settings()
 ```
 
+#### Snippet Breakdown:
+*   **`class Settings(BaseSettings)`**: Inherits from Pydantic's `BaseSettings`. This automatically maps class variables to matching environment variables (case-insensitive). If an environment variable is set (e.g. `IMAP_USERNAME="support@domain.com"`), Pydantic replaces the default `None` with that value.
+*   **`IMAP_POLL_INTERVAL: int = 60`**: Declares that this configuration parameter is strictly parsed as an integer. If the environment variable provides a string like `"30"`, Pydantic casts it to `30`.
+*   **`model_config = SettingsConfigDict(env_file=("../../.env", ".env"), extra="ignore")`**:
+    *   `env_file`: Tells Pydantic to look for a `.env` file first at `../../.env` (two levels up, which is the project root in our structure) and fallback to `.env` in the local directory if the parent isn't present.
+    *   `extra="ignore"`: Discards any extra environment variables in `.env` (like `GEMINI_API_KEY` or SMTP settings) that this poller service doesn't require, preventing validation conflicts.
+
 ---
 
 ### 2. Main Entry Point: `app/main.py`
-This is the heart of the poller service. It runs an infinite loop checking for unread email UIDs, posting them to Redis, and marking them read only after a successful queue write.
 
+This is the main driver script for the poller. Below is the detailed breakdown of each code section:
+
+#### Redis Connection Builder & Retry
 ```python
-"""
-Poller microservice — entry point.
-
-Responsibilities:
-  1. Poll Namecheap IMAP inbox every IMAP_POLL_INTERVAL seconds.
-  2. Fetch UNSEEN emails and mark them SEEN immediately (claim them).
-  3. Publish each email's payload to the Redis Stream "email:inbound".
-
-This service always runs as a single replica (replicas: 1 in docker-compose).
-Keeping it at one replica is what prevents two pollers from racing on the same
-UNSEEN email.  The Redis Stream + consumer group in the worker handles scale-out
-on the processing side.
-"""
-
-import json
-import logging
-import time
-
-import redis
-from imap_tools import AND, MailBox, MailMessageFlags
-
-from app.core.config import settings
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [poller] %(levelname)s %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-)
-logger = logging.getLogger(__name__)
-
-
 def _build_redis_client() -> redis.Redis:
     """Create and return a Redis client with connection retry."""
     client = redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -115,33 +94,26 @@ def _build_redis_client() -> redis.Redis:
     client.ping()
     logger.info("Connected to Redis at %s", settings.REDIS_URL)
     return client
+```
+*   **`decode_responses=True`**: Crucial config parameter. It instructs the Redis client to automatically decode binary string payloads fetched from Redis into Python native UTF-8 strings. Without this, all values read would return as `bytes` (e.g. `b"uid"`).
+*   **`client.ping()`**: Sends a synchronous ping-pong command to the Redis server. If Redis is starting up or offline, this raises a `ConnectionError`, prompting the startup routine to wait rather than executing loop cycles blindly.
 
+---
 
-def poll_once(r: redis.Redis) -> int:
-    """
-    Open IMAP, find all UNSEEN message UIDs, publish each UID to the Redis Stream,
-    and mark them as SEEN on success.
-    Returns the number of emails published.
-    """
-    username = settings.IMAP_USERNAME
-    password = settings.IMAP_PASSWORD
-
-    if not (username and password):
-        logger.warning("IMAP credentials not configured — skipping poll.")
-        return 0
-
-    published = 0
-    try:
-        with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
-            username, password
-        ) as mailbox:
+#### Fetching Unseen UIDs (Metadata Only)
+```python
             # Fetch UIDs of all unseen emails
             unseen_uids = mailbox.uids(AND(seen=False))
             if not unseen_uids:
                 return 0
+```
+*   **`mailbox.uids(AND(seen=False))`**: Performs an IMAP `SEARCH UNSEEN` command on the mail server. It **only** retrieves a list of numeric string identifiers (e.g., `['45', '46', '47']`).
+*   **Why this is highly scalable**: Unlike a standard fetch that downloads the full multipart MIME payload (including HTML bodies and heavy image attachments) for every unread email, this metadata lookup transfers only a few bytes. It avoids bloating the poller's CPU and RAM under heavy mail volumes.
 
-            logger.info("Found %d unseen email(s) in INBOX.", len(unseen_uids))
+---
 
+#### At-Least-Once Transactional Queueing & Claiming
+```python
             for uid in unseen_uids:
                 try:
                     payload = {"uid": uid}
@@ -155,43 +127,10 @@ def poll_once(r: redis.Redis) -> int:
                     logger.info("Published UID %s → stream entry %s and marked SEEN.", uid, stream_id)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Failed to process UID %s: %s", uid, exc)
-
-    except Exception as exc:  # noqa: BLE001
-        logger.error("IMAP connection/fetch error: %s", exc)
-
-    return published
-
-
-def run() -> None:
-    """Main loop — poll forever."""
-    # Retry Redis connection on startup (Redis may not be ready yet)
-    r: redis.Redis | None = None
-    while r is None:
-        try:
-            r = _build_redis_client()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Redis not ready yet (%s) — retrying in 3s…", exc)
-            time.sleep(3)
-
-    logger.info(
-        "Poller started. Interval=%ds, stream=%s",
-        settings.IMAP_POLL_INTERVAL,
-        settings.REDIS_STREAM_NAME,
-    )
-
-    while True:
-        try:
-            count = poll_once(r)
-            if count:
-                logger.info("Poll complete — %d email(s) queued.", count)
-            else:
-                logger.debug("Poll complete — inbox empty.")
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Unexpected error in poll loop: %s", exc)
-
-        time.sleep(settings.IMAP_POLL_INTERVAL)
-
-
-if __name__ == "__main__":
-    run()
 ```
+*   **`r.xadd(settings.REDIS_STREAM_NAME, payload)`**: Appends a new entry containing the email UID into the Redis Stream. Redis generates a unique timestamp-based ID (e.g., `1719123456789-0`) and returns it.
+*   **`mailbox.flag(uid, MailMessageFlags.SEEN, True)`**: Once (and only once) Redis successfully acknowledges the addition to the stream, the poller flags the email as `\Seen` on the IMAP server.
+*   **Why this is resilient**:
+    *   If the Redis connection fails or drops during the loop, the `xadd` will throw an error, skipping the `mailbox.flag` mutation. The email remains `UNSEEN` in the mailbox. On the next poll cycle, the poller tries again.
+    *   If the poller crashes after writing to the stream but before flagging it `SEEN`, the worker will still process the message. The duplicate entry will be caught by the worker's deduplication check.
+    *   Catches exceptions inside the loop (`except Exception`) so that a single corrupted email transaction does not abort processing for other valid emails in the same batch.
