@@ -17,7 +17,7 @@ import logging
 import time
 
 import redis
-from imap_tools import AND, MailBox
+from imap_tools import AND, MailBox, MailMessageFlags
 
 from app.core.config import settings
 
@@ -40,7 +40,8 @@ def _build_redis_client() -> redis.Redis:
 
 def poll_once(r: redis.Redis) -> int:
     """
-    Open IMAP, fetch all UNSEEN messages, mark them SEEN, publish to stream.
+    Open IMAP, find all UNSEEN message UIDs, publish each UID to the Redis Stream,
+    and mark them as SEEN on success.
     Returns the number of emails published.
     """
     username = settings.IMAP_USERNAME
@@ -55,60 +56,26 @@ def poll_once(r: redis.Redis) -> int:
         with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
             username, password
         ) as mailbox:
-            # mark_seen=True is atomic within imap-tools — marks the message
-            # SEEN on the server before we even touch it locally.
-            for msg in mailbox.fetch(AND(seen=False), mark_seen=True):
+            # Fetch UIDs of all unseen emails
+            unseen_uids = mailbox.uids(AND(seen=False))
+            if not unseen_uids:
+                return 0
+
+            logger.info("Found %d unseen email(s) in INBOX.", len(unseen_uids))
+
+            for uid in unseen_uids:
                 try:
-                    from_email = msg.from_
-                    if not from_email:
-                        continue
-
-                    msg_id = msg.obj.get("Message-ID", "").strip()
-                    references = msg.obj.get("References", "").strip()
-                    in_reply_to = msg.obj.get("In-Reply-To", "").strip()
-
-                    body_text = (
-                        msg.text.strip()
-                        if msg.text
-                        else msg.html.strip()
-                        if msg.html
-                        else ""
-                    )
-                    if not body_text:
-                        logger.warning("Empty body from %s — skipping.", from_email)
-                        continue
-
-                    # Derive a stable thread_id for LangGraph conversation history
-                    thread_id = (
-                        in_reply_to
-                        or references
-                        or msg_id
-                        or f"thread_{abs(hash(from_email + msg.subject)) % 100_000}"
-                    )
-
-                    payload = {
-                        "from_email": from_email,
-                        "subject": msg.subject or "(no subject)",
-                        "body": body_text,
-                        "message_id": msg_id,
-                        "references": references,
-                        "in_reply_to": in_reply_to,
-                        "thread_id": thread_id,
-                    }
-
-                    # XADD email:inbound * field value ...
-                    # Redis flattens the dict to field-value pairs in the stream entry.
+                    payload = {"uid": uid}
+                    # Push UID to the stream
                     stream_id = r.xadd(settings.REDIS_STREAM_NAME, payload)
+                    
+                    # Successfully added to Redis stream, now mark SEEN in IMAP
+                    mailbox.flag(uid, MailMessageFlags.SEEN, True)
+                    
                     published += 1
-                    logger.info(
-                        "Published email from %s (subject=%r) → stream entry %s",
-                        from_email,
-                        msg.subject,
-                        stream_id,
-                    )
-
+                    logger.info("Published UID %s → stream entry %s and marked SEEN.", uid, stream_id)
                 except Exception as exc:  # noqa: BLE001
-                    logger.error("Failed to publish individual message: %s", exc)
+                    logger.error("Failed to process UID %s: %s", uid, exc)
 
     except Exception as exc:  # noqa: BLE001
         logger.error("IMAP connection/fetch error: %s", exc)

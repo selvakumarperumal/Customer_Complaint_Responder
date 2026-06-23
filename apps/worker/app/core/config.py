@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str | None = None
     SMTP_FROM_NAME: str = "Customer Support"
 
+    # Namecheap IMAP Settings (for fetching emails)
+    IMAP_HOST: str = "mail.privateemail.com"
+    IMAP_PORT: int = 993
+    IMAP_USERNAME: str | None = None
+    IMAP_PASSWORD: str | None = None
+
     # Redis Settings
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_STREAM_NAME: str = "email:inbound"
