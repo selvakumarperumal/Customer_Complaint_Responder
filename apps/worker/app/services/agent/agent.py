@@ -2,7 +2,6 @@ from typing import TypedDict
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, START, StateGraph
-from langgraph.checkpoint.memory import MemorySaver
 
 from app.core.config import settings
 from app.services.agent.prompts import category_prompt, response_prompt
@@ -49,18 +48,13 @@ _workflow.add_edge(START, "classify")
 _workflow.add_edge("classify", "respond")
 _workflow.add_edge("respond", END)
 
-_checkpointer = MemorySaver()
-_app = _workflow.compile(checkpointer=_checkpointer)
+_app = _workflow.compile()
 
 
 def process_complaint(complaint_text: str, thread_id: str | None = None) -> dict:
     """Run the LangGraph workflow and return classification + response."""
-    if thread_id is None:
-        thread_id = f"thread_{abs(hash(complaint_text)) % 100_000}"
-    config = {"configurable": {"thread_id": thread_id}}
     result = _app.invoke(
-        {"complaint": complaint_text, "complaint_type": "", "response": ""},
-        config=config,
+        {"complaint": complaint_text, "complaint_type": "", "response": ""}
     )
     return {
         "complaint": complaint_text,

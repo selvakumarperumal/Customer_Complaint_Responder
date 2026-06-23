@@ -237,12 +237,12 @@ END
 ```
 
 **Thread-aware conversation history:**  
-Each email thread is identified by a `thread_id` derived from the email's `In-Reply-To` or `References` headers (or a hash of `from + subject` as fallback). LangGraph's `MemorySaver` checkpointer stores conversation state per `thread_id`, so follow-up emails from the same customer are answered with full context of the prior exchange.
+Conversation history is stored persistently inside the customer's email mailbox folder (IMAP). When a new email arrives, the worker normalizes the subject (removing prefixes like "Re:") to find all emails belonging to the same thread. It sorts them chronologically and compiles a clean, formatted conversation history transcript (omitting quoted reply blocks) to provide full context to the Gemini AI agent.
 
 **Prompts** (in `apps/worker/app/services/agent/prompts.py`):
 
-- **Classify prompt** — asks the model to return one of: `delivery`, `refund`, `product issue`, `other`
-- **Response prompt** — asks the model to generate a single professional, empathetic support reply given the complaint text and its category
+- **Classify prompt** — asks the model to classify the conversation thread into one of: `delivery`, `refund`, `product issue`, `other`
+- **Response prompt** — asks the model to generate a single professional, empathetic support reply addressing the latest request in the thread history
 
 ---
 
