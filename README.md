@@ -27,11 +27,12 @@ An AI-powered customer complaint handling system that monitors a support inbox, 
 
 When a customer sends a complaint email to your support inbox:
 
-1. The **Poller** detects it via IMAP and immediately claims it (marks as `SEEN`)
-2. The email payload is pushed to a **Redis Stream**
-3. A **Worker** picks it up, runs it through the **LangGraph AI agent** (classify → respond)
-4. The Worker sends a professional reply via **SMTP**
-5. The `Message-ID` is stored in Redis so the email is never replied to twice
+1. The **Poller** detects it via IMAP, pulls only its `uid`, and pushes it to a **Redis Stream**
+2. On successful push, the Poller marks the email as `SEEN` to claim it
+3. A **Worker** replica pulls the `uid` from the stream and downloads the full email headers/body from IMAP on-demand
+4. The Worker checks if the email's `Message-ID` has already been handled, and if not, runs it through the **LangGraph AI agent** (classify → respond)
+5. The Worker sends a professional reply via **SMTP**
+6. The `Message-ID` is stored in Redis (30-day TTL) so the email is never replied to twice, and the stream entry is acknowledged
 
 The system is designed to scale horizontally — you can run multiple Worker replicas safely because Redis Streams guarantee each email is processed by exactly one worker.
 
@@ -53,14 +54,9 @@ Namecheap IMAP inbox  (mail.privateemail.com:993)
 │             POLLER                  │
 │  (always exactly 1 replica)         │
 │                                     │
-│  1. IMAP SEARCH UNSEEN              │
-│  2. Mark each email SEEN            │  ← claims the email immediately
-│     (atomic on the mail server)     │
-│  3. Extract payload:                │
-│       from_email, subject, body,    │
-│       message_id, references,       │
-│       in_reply_to, thread_id        │
-│  4. XADD email:inbound * ...        │  ← push to Redis Stream
+│  1. IMAP SEARCH UNSEEN (UIDs only)  │  ← extremely fast & lightweight
+│  2. XADD email:inbound * uid={uid}   │  ← push UID to Redis Stream
+│  3. Mark UID as SEEN in mailbox     │  ← claim email only on success
 └─────────────────────────────────────┘
         │
         │  Redis Stream  "email:inbound"
@@ -71,15 +67,16 @@ Namecheap IMAP inbox  (mail.privateemail.com:993)
 │             WORKER                  │
 │  (scale to any number of replicas)  │
 │                                     │
-│  1. XREADGROUP (block 5s)           │  ← each message → exactly 1 worker
-│  2. Check Redis: EXISTS             │
+│  1. XREADGROUP (block 5s)           │  ← get UID from stream entry
+│  2. Connect to IMAP, fetch by UID   │  ← on-demand download & parsing
+│  3. Check Redis: EXISTS             │
 │       replied:{message_id}          │  ← skip if already handled
-│  3. LangGraph AI pipeline:          │
+│  4. LangGraph AI pipeline:          │
 │       classify complaint type       │
 │       generate professional reply   │
-│  4. Send reply via SMTP             │
-│  5. SET replied:{message_id} 1      │  ← mark as done (30-day TTL)
-│  6. XACK stream entry               │  ← remove from Pending Entry List
+│  5. Send reply via SMTP             │
+│  6. SET replied:{message_id} 1      │  ← mark as done (30-day TTL)
+│  7. XACK stream entry               │  ← remove from Pending Entry List
 └─────────────────────────────────────┘
         │
         ▼
@@ -164,15 +161,15 @@ The Poller runs a simple infinite loop:
 ```
 while True:
     connect to IMAP (SSL)
-    for each UNSEEN email:
-        mark SEEN immediately          # claim it — no other poller can see it
-        extract: subject, body, from, message_id, thread_id ...
-        XADD email:inbound * <payload> # publish to Redis Stream
+    get all UNSEEN email UIDs          # fast lookup (no content download)
+    for each uid:
+        XADD email:inbound * uid=<uid> # publish lightweight UID to Redis
+        mark SEEN on success           # claim email only after queued
     sleep(IMAP_POLL_INTERVAL)
 ```
 
-**Key design choice — `mark_seen=True` before processing:**  
-The `imap-tools` library's `fetch(..., mark_seen=True)` marks each email `\Seen` on the server as part of the fetch itself, before the application code ever touches the message body. This means even if the poller crashes mid-batch, those emails are already claimed and won't be picked up by a restart (they'll be visible in the IMAP inbox as "read" — an acceptable trade-off for guaranteed no-double-processing).
+**Key design choice — Lazy fetching and at-least-once queueing:**  
+The Poller uses a lightweight IMAP search for unseen email UIDs, pushes them to Redis Stream first, and only marks them `\Seen` on the mail server upon a successful `XADD`. This avoids downloading large MIME bodies inside the poller. If a failure occurs before the message is queued, it remains unseen and is retried. Once in the stream, the worker pool handles the retrieval and processing.
 
 ---
 
@@ -191,6 +188,7 @@ on startup:
 while True:
     messages = XREADGROUP GROUP complaint-workers <hostname> COUNT 10 BLOCK 5000
     for each message:
+        connect to IMAP, fetch message by UID
         if EXISTS replied:{message_id}:
             XACK and skip             # already handled
         run LangGraph AI pipeline     # classify + respond
@@ -259,10 +257,10 @@ cp .env.example .env
 | Variable | Used By | Description | Default |
 |---|---|---|---|
 | `GEMINI_API_KEY` | worker | Google Gemini API key | *(required)* |
-| `IMAP_HOST` | poller | IMAP server hostname | `mail.privateemail.com` |
-| `IMAP_PORT` | poller | IMAP server port (SSL) | `993` |
-| `IMAP_USERNAME` | poller | Email address to poll | *(required)* |
-| `IMAP_PASSWORD` | poller | Email account password | *(required)* |
+| `IMAP_HOST` | both | IMAP server hostname | `mail.privateemail.com` |
+| `IMAP_PORT` | both | IMAP server port (SSL) | `993` |
+| `IMAP_USERNAME` | both | Email address to poll | *(required)* |
+| `IMAP_PASSWORD` | both | Email account password | *(required)* |
 | `IMAP_POLL_INTERVAL` | poller | Seconds between inbox checks | `60` |
 | `SMTP_HOST` | worker | SMTP server hostname | `mail.privateemail.com` |
 | `SMTP_PORT` | worker | SMTP port (STARTTLS) | `587` |
@@ -333,14 +331,15 @@ Send an email to your support inbox (the address in `IMAP_USERNAME`). Within `IM
 
 ```
 # In poller logs:
-2026-06-23T07:30:01 [poller] INFO Published email from customer@example.com → stream entry 1234567890-0
+2026-06-23T13:30:01 [poller] INFO Published UID 45 → stream entry 1234567890-0 and marked SEEN.
 
 # In worker logs:
-2026-06-23T07:30:02 [worker/abc123] INFO Received email from customer@example.com (subject='Order not arrived')
-2026-06-23T07:30:02 [worker/abc123] INFO Running LangGraph complaint handler for thread_id=...
-2026-06-23T07:30:04 [worker/abc123] INFO Classified as: delivery
-2026-06-23T07:30:05 [worker/abc123] INFO Successfully sent email to customer@example.com
-2026-06-23T07:30:05 [worker/abc123] INFO Marked Message-ID <...> as replied (TTL=2592000s).
+2026-06-23T13:30:02 [worker/abc123] INFO Received job for email UID 45 (stream_id=1234567890-0)
+2026-06-23T13:30:03 [worker/abc123] INFO Fetched email from customer@example.com (subject='Order not arrived', message_id=<...>)
+2026-06-23T13:30:03 [worker/abc123] INFO Running LangGraph complaint handler for thread_id=...
+2026-06-23T13:30:05 [worker/abc123] INFO Classified as: delivery
+2026-06-23T13:30:06 [worker/abc123] INFO Successfully sent email to customer@example.com
+2026-06-23T13:30:06 [worker/abc123] INFO Marked Message-ID <...> as replied (TTL=2592000s).
 ```
 
 ### 6. Stop
