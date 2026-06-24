@@ -60,10 +60,10 @@ flowchart TD
     Poller -->|2. XADD email:inbound * uid=123| Stream
     Poller -->|3. Mark SEEN| IMAP
 
-    Stream -->|4. XREADGROUP (Assigns to Worker 1)| Worker1
+    Stream -->|"4. XREADGROUP - Assigns to Worker 1"| Worker1
     Stream -.->|Locks message in| PEL1
 
-    Stream -->|4. XREADGROUP (Assigns to Worker 2)| Worker2
+    Stream -->|"4. XREADGROUP - Assigns to Worker 2"| Worker2
     Stream -.->|Locks message in| PEL2
 
     Worker1 -->|5. EXISTS replied:msg_id?| DedupeCache
