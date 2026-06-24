@@ -9,7 +9,7 @@ The AI Worker is a scalable microservice responsible for consuming inbound email
 1. **Redis Stream Consumer**: Joins the `complaint-workers` consumer group and blocks on the `email:inbound` stream for new job entries (delivering only the email UID).
 2. **On-Demand IMAP Fetcher**: Establishes short-lived IMAP connections to fetch the target email by UID and search the inbox for all messages matching the normalized subject (the conversation thread).
 3. **Thread Cleaner**: Chronologically sorts and strips out quoted reply history (lines starting with `>`) to construct a clean conversation transcript.
-4. **LangGraph Pipeline**: Invokes the stateless two-node LangGraph agent using Google Gemini (`gemini-2.0-flash`) to classify the complaint category (`delivery`, `refund`, `product issue`, `other`) and generate an empathetic response.
+4. **LangGraph Pipeline**: Invokes the stateless two-node LangGraph agent using Google Gemini (`gemini-3.5-flash`) to classify the complaint category (`delivery`, `refund`, `product issue`, `other`) and generate an empathetic response.
 5. **Deduplication Check**: Ensures no duplicate replies are sent by checking and writing to a Redis `replied:{Message-ID}` key (with a 30-day TTL).
 6. **SMTP Dispatches**: Sends replies viaNamecheap SMTP with proper `In-Reply-To` and `References` headers for inbox grouping.
 7. **Stream Acknowledgement**: Sends `XACK` to remove the message from the Pending Entry List (PEL).

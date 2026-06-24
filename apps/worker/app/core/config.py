@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = Field(
         validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY")
     )
-    MODEL_NAME: str = "gemini-2.0-flash"
+    MODEL_NAME: str = "gemini-3.5-flash"
     TEMPERATURE: float = 0.1
 
     SMTP_HOST: str = "mail.privateemail.com"

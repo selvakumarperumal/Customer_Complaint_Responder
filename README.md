@@ -404,7 +404,7 @@ docker compose exec redis redis-cli EXISTS "replied:<message-id>"
 
 | Component | Technology |
 |---|---|
-| AI Model | Google Gemini (`gemini-2.0-flash`) |
+| AI Model | Google Gemini (`gemini-3.5-flash`) |
 | AI Orchestration | LangGraph + LangChain |
 | Message Queue | Redis 7 Streams (consumer groups) |
 | IMAP Client | `imap-tools` |

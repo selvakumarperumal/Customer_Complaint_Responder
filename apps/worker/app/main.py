@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 def _build_redis_client() -> redis.Redis:
     """Create Redis client with retry on startup."""
-    client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    client = redis.from_url(settings.REDIS_URL, decode_responses=True, socket_timeout=15)
     client.ping()
     logger.info("Connected to Redis at %s", settings.REDIS_URL)
     return client
@@ -235,6 +235,10 @@ def run() -> None:
             for _stream_name, entries in response:
                 for entry_id, fields in entries:
                     _handle_message(r, entry_id, fields)
+
+        except redis.exceptions.TimeoutError:
+            # Normal socket read timeout on blocking read (no messages)
+            continue
 
         except redis.exceptions.ConnectionError as exc:
             logger.error("Redis connection lost: %s — reconnecting in 5s…", exc)

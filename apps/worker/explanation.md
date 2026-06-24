@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = Field(
         validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY")
     )
-    MODEL_NAME: str = "gemini-2.0-flash"
+    MODEL_NAME: str = "gemini-3.5-flash"
     TEMPERATURE: float = 0.1
 
     # Namecheap SMTP (for sending replies)
@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: str = "Customer Support"
 ```
 *   `GOOGLE_API_KEY: str = Field(...)`: Defines the API key as a string. `validation_alias=AliasChoices(...)` allows loading the key from either `GOOGLE_API_KEY` or `GEMINI_API_KEY` environment values.
-*   `MODEL_NAME: str = "gemini-2.0-flash"`: Specifies the LLM model name string, defaulting to Gemini 2.0 Flash.
+*   `MODEL_NAME: str = "gemini-3.5-flash"`: Specifies the LLM model name string, defaulting to Gemini 3.5 Flash.
 *   `TEMPERATURE: float = 0.1`: Sets the generation temperature float parameter, defaulting to a deterministic `0.1`.
 *   `SMTP_HOST: str = "mail.privateemail.com"`: SMTP hostname string.
 *   `SMTP_PORT: int = 587`: SMTP connection port integer, defaulting to STARTTLS port `587`.
