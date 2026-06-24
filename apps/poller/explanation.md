@@ -9,36 +9,54 @@ This document explains the internal scripts, source code, and execution flow of 
 The following Mermaid diagram shows the lifecycle and polling logic executed by `app/main.py` in the poller container:
 
 ```mermaid
+%%{init: {
+  'theme': 'dark',
+  'themeVariables': {
+    'background': '#282a36',
+    'primaryColor': '#282a36',
+    'primaryTextColor': '#f8f8f2',
+    'lineColor': '#6272a4'
+  }
+}}%%
 graph TD
-    Start([Service Start]) --> InitRedis[Initialize Redis Client]
+    classDef startEnd fill:#282a36,stroke:#ff79c6,stroke-width:2px,color:#f8f8f2;
+    classDef process fill:#282a36,stroke:#8be9fd,stroke-width:2px,color:#f8f8f2;
+    classDef success fill:#282a36,stroke:#50fa7b,stroke-width:2px,color:#f8f8f2;
+    classDef decision fill:#282a36,stroke:#f1fa8c,stroke-width:2px,color:#f8f8f2;
+    classDef waitState fill:#282a36,stroke:#ffb86c,stroke-width:2px,color:#f8f8f2;
+    classDef errorState fill:#282a36,stroke:#ff5555,stroke-width:2px,color:#f8f8f2;
+
+    Start([Service Start]):::startEnd --> InitRedis[Initialize Redis Client]:::process
     
     subgraph Connection Retry Loop
-        InitRedis -->|Failure| RetryRedis[Wait 3s]
+        InitRedis -->|Failure| RetryRedis[Wait 3s]:::waitState
         RetryRedis --> InitRedis
-        InitRedis -->|Success| PollLoop{Poll Inbox Loop}
+        InitRedis -->|Success| PollLoop{Poll Inbox Loop}:::decision
     end
 
-    PollLoop --> LoginIMAP[Login to Namecheap IMAP]
-    LoginIMAP -->|Failure| LogError[Log Error] --> Sleep[Sleep IMAP_POLL_INTERVAL]
-    LoginIMAP -->|Success| FetchUIDs[Fetch UNSEEN Message UIDs]
+    PollLoop --> LoginIMAP[Login to Namecheap IMAP]:::process
+    LoginIMAP -->|Failure| LogError[Log Error]:::errorState --> Sleep[Sleep IMAP_POLL_INTERVAL]:::waitState
+    LoginIMAP -->|Success| FetchUIDs[Fetch UNSEEN Message UIDs]:::success
     
-    FetchUIDs -->|No UIDs Found| CloseIMAP[Close IMAP Session]
+    FetchUIDs -->|No UIDs Found| CloseIMAP[Close IMAP Session]:::process
     CloseIMAP --> Sleep
     
-    FetchUIDs -->|UIDs Found| LoopUIDs[For each UID]
+    FetchUIDs -->|UIDs Found| LoopUIDs[For each UID]:::decision
     
-    LoopUIDs --> PushStream[Publish UID to Redis Stream XADD]
+    LoopUIDs --> PushStream[Publish UID to Redis Stream XADD]:::success
     
-    PushStream -->|Success| MarkSeen[Mark Email as SEEN in Inbox]
-    MarkSeen --> NextUID{More UIDs?}
+    PushStream -->|Success| MarkSeen[Mark Email as SEEN in Inbox]:::success
+    MarkSeen --> NextUID{More UIDs?}:::decision
     
-    PushStream -->|Failure| LogPushError[Log Publish Error]
+    PushStream -->|Failure| LogPushError[Log Publish Error]:::errorState
     LogPushError --> NextUID
     
     NextUID -->|Yes| LoopUIDs
     NextUID -->|No| CloseIMAP
     
     Sleep --> PollLoop
+
+    linkStyle default stroke:#6272a4,stroke-width:2px;
 ```
 
 ---

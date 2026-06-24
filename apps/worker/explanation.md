@@ -9,39 +9,58 @@ This document explains the internal scripts, source code, and execution flow of 
 The following Mermaid diagram outlines how a worker pod processes a stream entry (UID job) from Redis:
 
 ```mermaid
+%%{init: {
+  'theme': 'dark',
+  'themeVariables': {
+    'background': '#282a36',
+    'primaryColor': '#282a36',
+    'primaryTextColor': '#f8f8f2',
+    'lineColor': '#6272a4'
+  }
+}}%%
 graph TD
-    Start([Job Dequeued from Stream]) --> LoginIMAP[Login to Namecheap IMAP]
-    LoginIMAP --> FetchTarget[Fetch Target Email by UID]
+    classDef startEnd fill:#282a36,stroke:#ff79c6,stroke-width:2px,color:#f8f8f2;
+    classDef process fill:#282a36,stroke:#8be9fd,stroke-width:2px,color:#f8f8f2;
+    classDef success fill:#282a36,stroke:#50fa7b,stroke-width:2px,color:#f8f8f2;
+    classDef decision fill:#282a36,stroke:#f1fa8c,stroke-width:2px,color:#f8f8f2;
+    classDef waitState fill:#282a36,stroke:#ffb86c,stroke-width:2px,color:#f8f8f2;
+    classDef errorState fill:#282a36,stroke:#ff5555,stroke-width:2px,color:#f8f8f2;
+    classDef agentState fill:#282a36,stroke:#bd93f9,stroke-width:2px,color:#f8f8f2;
+
+    Start([Job Dequeued from Stream]):::startEnd --> LoginIMAP[Login to Namecheap IMAP]:::process
+    LoginIMAP --> FetchTarget[Fetch Target Email by UID]:::process
     
-    FetchTarget -->|Not Found| AckSkip[ACK & Skip]
+    FetchTarget -->|Not Found| AckSkip[ACK & Skip]:::waitState
     
-    FetchTarget -->|Found| Normalize[Normalize Subject: strip Re:, Fwd:, etc.]
-    Normalize --> SearchThread[Search Inbox for all matching subjects]
-    SearchThread --> SortChron[Sort messages chronologically]
+    FetchTarget -->|Found| Normalize[Normalize Subject: strip Re:, Fwd:, etc.]:::process
+    Normalize --> SearchThread[Search Inbox for all matching subjects]:::process
+    SearchThread --> SortChron[Sort messages chronologically]:::process
     
     subgraph Conversation Compilation
-        SortChron --> LoopMsgs[For each message in thread]
-        LoopMsgs --> StripQuotes[Strip lines starting with '>']
-        StripQuotes --> FormatTranscript[Append to Thread History Transcript]
+        SortChron --> LoopMsgs[For each message in thread]:::decision
+        LoopMsgs --> StripQuotes[Strip lines starting with '>']:::process
+        StripQuotes --> FormatTranscript[Append to Thread History Transcript]:::process
     end
     
-    FormatTranscript --> CloseIMAP[Close IMAP Connection]
+    FormatTranscript --> CloseIMAP[Close IMAP Connection]:::process
     
-    CloseIMAP --> CheckDedupe{Redis EXISTS replied:Message-ID?}
+    CloseIMAP --> CheckDedupe{Redis EXISTS replied:Message-ID?}:::decision
     CheckDedupe -->|Yes| AckSkip
-    CheckDedupe -->|No| RunAgent[Run LangGraph Agent]
+    CheckDedupe -->|No| RunAgent[Run LangGraph Agent]:::agentState
     
     subgraph LangGraph Pipeline
-        RunAgent --> Classify[Classify: category_prompt]
-        Classify --> Generate[Generate Response: response_prompt]
+        RunAgent --> Classify[Classify: category_prompt]:::agentState
+        Classify --> Generate[Generate Response: response_prompt]:::agentState
     end
     
-    Generate --> SendSMTP[Send Outbound Email via Namecheap SMTP]
+    Generate --> SendSMTP[Send Outbound Email via Namecheap SMTP]:::success
     
-    SendSMTP -->|Success| SaveDedupe[SET replied:Message-ID EX 30 days]
-    SaveDedupe --> ACK[XACK Stream Entry]
+    SendSMTP -->|Success| SaveDedupe[SET replied:Message-ID EX 30 days]:::success
+    SaveDedupe --> ACK[XACK Stream Entry]:::success
     
-    SendSMTP -->|Failure| LogError[Log Error & Do NOT ACK]
+    SendSMTP -->|Failure| LogError[Log Error & Do NOT ACK]:::errorState
+
+    linkStyle default stroke:#6272a4,stroke-width:2px;
 ```
 
 ---

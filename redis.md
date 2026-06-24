@@ -54,11 +54,21 @@ Email C ──┘                       ├──▶ Worker 2 gets Email B ✅
 ## 3. Simplified Flow Diagram
 
 ```mermaid
+%%{init: {
+  'theme': 'dark',
+  'themeVariables': {
+    'background': '#282a36',
+    'primaryColor': '#282a36',
+    'primaryTextColor': '#f8f8f2',
+    'lineColor': '#6272a4',
+    'transitionColor': '#ff79c6'
+  }
+}}%%
 flowchart TD
-    classDef yellow fill:#fff2cc,stroke:#d6b656,stroke-width:2px;
-    classDef green fill:#d5e8d4,stroke:#82b366,stroke-width:2px;
-    classDef blue fill:#dae8fc,stroke:#6c8ebf,stroke-width:2px;
-    classDef orange fill:#fce5cd,stroke:#e69138,stroke-width:2px;
+    classDef yellow fill:#282a36,stroke:#f1fa8c,stroke-width:2px,color:#f8f8f2;
+    classDef green fill:#282a36,stroke:#50fa7b,stroke-width:2px,color:#f8f8f2;
+    classDef blue fill:#282a36,stroke:#8be9fd,stroke-width:2px,color:#f8f8f2;
+    classDef orange fill:#282a36,stroke:#ffb86c,stroke-width:2px,color:#f8f8f2;
 
     IMAP["📧 Email Server"]:::yellow
     Poller["🔍 Poller"]:::green
@@ -87,6 +97,8 @@ flowchart TD
     W1 -->|5. Mark done| Cache
     W2 -->|5. Mark done| Cache
     W3 -->|5. Mark done| Cache
+
+    linkStyle default stroke:#6272a4,stroke-width:2px;
 ```
 
 ---
