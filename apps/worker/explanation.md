@@ -746,9 +746,26 @@ def run() -> None:
 if __name__ == "__main__":
     run()
 ```
-*   `r.xreadgroup(...)`: Blocks up to 5 seconds waiting for fresh un-allocated stream entries (`">"`) in database queue.
-*   `if not response: continue`: Loops back on polling timeout.
-*   `for entry_id, fields in entries: _handle_message(...)`: Iterates through batch items, triggering processing handler for each message.
-*   `except redis.exceptions.TimeoutError:`: Catches normal read timeout exceptions on the blocking connection silently, returning to the top of the loop.
-*   `except redis.exceptions.ConnectionError:`: Logs lost connection errors and sleeps for 5 seconds. On the next iteration, the Redis client's internal connection pool will automatically attempt reconnection.
-*   `except Exception as exc:`: Catches unhandled loop faults to maintain process uptime.
+*   `while True:`: Enters an infinite loop so the worker container runs forever, constantly listening for incoming jobs.
+*   `try:`: Opens the main try-except block to protect the infinite loop from crashing due to unexpected network drops or errors.
+*   `response = r.xreadgroup(`: Invokes the Redis `XREADGROUP` command to fetch messages as a member of a consumer group.
+*   `groupname=settings.REDIS_CONSUMER_GROUP,`: Identifies the group name (`complaint-workers`) that manages load balancing across all workers.
+*   `consumername=_hostname,`: Passes the specific container's hostname as the consumer name, which Redis uses to assign and track pending tasks in the Pending Entry List (PEL).
+*   `streams={settings.REDIS_STREAM_NAME: ">"},`: Specifies the Redis stream key to query, using the special `">"` ID value which tells Redis to only return new messages that have never been delivered to any other consumer in this group.
+*   `count=10,`: Restricts the read size to a maximum of 10 stream entries per batch to prevent overloading the worker replica.
+*   `block=5000,`: Instructs Redis to block (wait) for up to 5,000 milliseconds (5 seconds) if there are no new messages in the queue, returning immediately as soon as a new message is pushed.
+*   `if not response:`: Checks if the response is empty (which happens if the 5-second block timed out with zero new messages in the stream).
+*   `continue`: Returns to the beginning of the `while True:` loop to issue another read command.
+*   `for _stream_name, entries in response:`: Iterates through the list of stream responses returned by Redis (since `xread` can query multiple streams at once).
+*   `for entry_id, fields in entries:`: Loops through the batch of message entries (consisting of the unique stream ID and payload fields) returned for the stream.
+*   `_handle_message(r, entry_id, fields)`: Dispatches the entry ID and payload dictionary (containing the email UID) to the message handler to compile history, process via LangGraph, and send SMTP replies.
+*   `except redis.exceptions.TimeoutError:`: Catches the socket read timeout raised if the blocking read expires without receiving data.
+*   `continue`: Ignores it and safely loops back to poll again.
+*   `except redis.exceptions.ConnectionError as exc:`: Catches connection loss errors when the Redis server goes offline.
+*   `logger.error("Redis connection lost: %s — retrying in 5s…", exc)`: Logs a connection lost warning.
+*   `time.sleep(5)`: Sleeps for 5 seconds to throttle retries and avoid spamming log outputs while the database is offline.
+*   `except Exception as exc:`: Catches all other unexpected standard exceptions to prevent the worker container from crashing.
+*   `logger.error("Unexpected error in worker loop: %s", exc)`: Logs the unexpected traceback for diagnostics.
+*   `time.sleep(1)`: Sleeps for 1 second before retrying the loop to prevent tight loop utilization on errors.
+*   `if __name__ == "__main__":`: Python entrypoint check to ensure the worker starts running only when executed directly as a script.
+*   `run()`: Invokes the main initialization and loop orchestration function.
