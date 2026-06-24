@@ -90,24 +90,30 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
     Always ACKs the message if handled successfully or if it's an unrecoverable/skipped scenario.
     """
     uid = fields.get("uid", "")
+    
     logger.info("Received job for email UID %s (stream_id=%s)", uid, stream_entry_id)
 
     if not uid:
         logger.warning("No UID found in stream entry %s — skipping.", stream_entry_id)
+        
         r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
         return
 
     if not (settings.IMAP_USERNAME and settings.IMAP_PASSWORD):
         logger.error("IMAP settings are not configured in worker — cannot fetch email %s", uid)
+        
         raise ValueError("IMAP settings are not configured in worker.")
 
     try:
+        # ── 1. Fetch email and its thread history from IMAP on-demand ────────
         with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
             settings.IMAP_USERNAME, settings.IMAP_PASSWORD
         ) as mailbox:
             messages = list(mailbox.fetch(AND(uid=uid)))
+            
             if not messages:
                 logger.warning("Email with UID %s not found in mailbox — skipping.", uid)
+                
                 r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
                 return
             
@@ -155,28 +161,37 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
             message_id,
         )
 
+        # ── 2. Dedupe check ─────────────────────────────────────────────────
         if message_id:
             key = _dedupe_key(message_id)
             if r.exists(key):
                 logger.warning(
                     "Already replied to Message-ID %s — skipping duplicate.", message_id
                 )
+                
                 r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
                 return
         else:
             logger.warning("Email has no Message-ID header — dedupe not possible.")
 
+        # ── 3. Validate ────────────────-------------------------------------
         if not from_email or not thread_history.strip():
             logger.warning("Missing from_email or thread history — skipping.")
+            
             r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
             return
 
+        # ── 4. Run LangGraph AI agent ────────────────────────────────────────
         logger.info("Running LangGraph complaint handler for thread_id=%s", thread_id)
+        
         result = process_complaint(thread_history, thread_id=thread_id)
+        
         logger.info("Classified as: %s", result["complaint_type"])
 
+        # ── 5. Build reply subject ──────────────────────────────────────────
         reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
 
+        # ── 6. Send SMTP reply ──────────────────────────────────────────────
         sent = send_support_email(
             to_email=from_email,
             subject=reply_subject,
@@ -185,11 +200,15 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
             references=f"{references} {message_id}".strip() or None,
         )
 
+        # ── 7. Mark as replied in Redis ─────────────────────────────────────
         if sent and message_id:
             r.set(_dedupe_key(message_id), "1", ex=settings.REDIS_DEDUPE_TTL)
+            
             logger.info("Marked Message-ID %s as replied (TTL=%ds).", message_id, settings.REDIS_DEDUPE_TTL)
 
+        # ── 8. Success ACK ──────────────────────────────────────────────────
         r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
+        
         logger.info("Successfully processed and ACKed stream entry %s", stream_entry_id)
 
     except Exception as exc:  # noqa: BLE001
