@@ -256,3 +256,6 @@ crash.*.log
 .DS_Store?
 Thumbs.db
 ehthumbs.db
+
+# Temporary directory
+tmp/

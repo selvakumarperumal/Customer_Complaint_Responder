@@ -20,8 +20,9 @@ import logging
 import socket
 import time
 
+# pyrefly: ignore [missing-import]
 import redis
-from imap_tools import AND, MailBox
+from imap_tools import AND, MailBox, OR
 
 from app.core.config import settings
 from app.services.agent.agent import process_complaint
@@ -138,9 +139,59 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
                         s = s[len(prefix):].strip()
                 return s.strip()
 
-            norm_subj = normalize_subject(subject)
+            def collect_thread_message_ids(message_id_: str, references_: str, in_reply_to_: str) -> set:
+                """
+                Collect every Message-ID that belongs to this email's thread,
+                based on RFC 2822/5322 threading headers (References / In-Reply-To).
+                This is the canonical way mail clients (Gmail, Outlook, Apple Mail)
+                group conversations — far more reliable than subject-text matching.
+                """
+                ids = set()
+                if message_id_:
+                    ids.add(message_id_)
+                if references_:
+                    ids.update(references_.split())
+                if in_reply_to_:
+                    ids.add(in_reply_to_)
+                return ids
 
-            thread_messages = list(mailbox.fetch(AND(subject=norm_subj)))
+            norm_subj = normalize_subject(subject)
+            thread_msg_ids = collect_thread_message_ids(message_id, references, in_reply_to)
+
+            # ── 1a. Narrow candidate pool server-side: same normalized subject
+            #        AND (sent by this customer OR sent to this customer).
+            #        This is cheap (IMAP-indexed) but NOT sufficient on its own —
+            #        two different customers can share an identical subject line
+            #        (e.g. "Refund request"), which would otherwise leak one
+            #        customer's thread into another's context.
+            candidates = list(
+                mailbox.fetch(
+                    AND(subject=norm_subj) & OR(from_=from_email, to=from_email)
+                )
+            )
+
+            # ── 1b. Strict filter in Python using the Message-ID/References
+            #        chain, so we only keep messages that are *actually* part
+            #        of this exact conversation — not just same-subject noise
+            #        from a different customer, and not lost due to subject
+            #        text drift (extra "FWD:", translated "Re:", etc.).
+            if thread_msg_ids:
+                thread_messages = [
+                    m for m in candidates
+                    if m.obj.get("Message-ID", "").strip() in thread_msg_ids
+                    or (thread_msg_ids & set(m.obj.get("References", "").strip().split()))
+                    or (m.obj.get("In-Reply-To", "").strip() in thread_msg_ids)
+                ]
+                # Always include the triggering message itself, even if its
+                # own Message-ID logic above didn't catch it (e.g. first
+                # message in a thread, no prior References to match against).
+                if not any(m.obj.get("Message-ID", "").strip() == message_id for m in thread_messages):
+                    thread_messages.append(msg)
+            else:
+                # No usable threading headers at all (rare) — fall back to the
+                # participant-narrowed, subject-matched candidate pool as-is.
+                thread_messages = candidates or [msg]
+
             thread_messages.sort(key=lambda m: m.date or m.date_str)
 
             thread_history = ""

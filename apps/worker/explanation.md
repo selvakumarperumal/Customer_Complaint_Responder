@@ -32,9 +32,10 @@ graph TD
     
     FetchTarget -->|Not Found| AckSkip[ACK & Skip]:::waitState
     
-    FetchTarget -->|Found| Normalize[Normalize Subject: strip Re:, Fwd:, etc.]:::process
-    Normalize --> SearchThread[Search Inbox for all matching subjects]:::process
-    SearchThread --> SortChron[Sort messages chronologically]:::process
+    FetchTarget -->|Found| Normalize[Normalize Subject & Collect Thread Message-IDs]:::process
+    Normalize --> QueryCandidates[Query IMAP: same subject AND sent by/to customer]:::process
+    QueryCandidates --> FilterChain[Python Filter: match Message-ID / References chain]:::process
+    FilterChain --> SortChron[Sort messages chronologically]:::process
     
     subgraph Conversation Compilation
         SortChron --> LoopMsgs[For each message in thread]:::decision
@@ -55,7 +56,8 @@ graph TD
     
     Generate --> SendSMTP[Send Outbound Email via Namecheap SMTP]:::success
     
-    SendSMTP -->|Success| SaveDedupe[SET replied:Message-ID EX 30 days]:::success
+    SendSMTP -->|Success| CopySent[IMAP: Upload copy to 'Sent' folder]:::success
+    CopySent --> SaveDedupe[SET replied:Message-ID EX 30 days]:::success
     SaveDedupe --> ACK[XACK Stream Entry]:::success
     
     SendSMTP -->|Failure| LogError[Log Error & Do NOT ACK]:::errorState
@@ -150,6 +152,8 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 # Import the MIME text class to handle plain text email bodies
 from email.mime.text import MIMEText
+# Import make_msgid utility to generate unique Message-ID headers for emails
+from email.utils import make_msgid
 # Import the logging module to output structured diagnostic messages
 import logging
 # Import the global configuration instance containing SMTP credentials
@@ -191,8 +195,16 @@ def send_support_email(
         msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
         # Set the destination target recipient address header
         msg["To"] = to_email
+
+        # Ensure reply subject starts with "Re:" if not already present
+        if subject and not subject.lower().startswith("re:"):
+            # Prepend the standard "Re: " prefix to the subject
+            subject = f"Re: {subject}"
         # Set the email subject line header
         msg["Subject"] = subject
+
+        # Generate a unique Message-ID header for this outgoing email to allow client threading
+        msg["Message-ID"] = make_msgid()
 
         # If replying to a specific email, insert the In-Reply-To header
         if in_reply_to:
@@ -201,8 +213,8 @@ def send_support_email(
         if references:
             msg["References"] = references
 
-        # Attach the reply body text as a plain text MIME segment
-        msg.attach(MIMEText(body_text, "plain"))
+        # Attach the reply body text as a plain text MIME segment using explicit UTF-8 encoding
+        msg.attach(MIMEText(body_text, "plain", "utf-8"))
 ```
 
 #### Snippet 2.4: SMTP Connections & Login
@@ -226,6 +238,24 @@ def send_support_email(
         server.quit()
         # Log success info message
         logger.info("Successfully sent email to %s", to_email)
+
+        # Upload a copy of the sent email to IMAP "Sent" folder so it appears in mail UI
+        if settings.IMAP_USERNAME and settings.IMAP_PASSWORD:
+            try:
+                # Import MailBox from imap_tools dynamically
+                from imap_tools import MailBox
+                # Connect to the IMAP server and login using credentials
+                with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=10).login(
+                    settings.IMAP_USERNAME, settings.IMAP_PASSWORD
+                ) as mailbox:
+                    # Append the compiled MIME message as raw bytes to the "Sent" folder
+                    mailbox.append(msg.as_bytes(), "Sent")
+                # Log success of Sent folder upload
+                logger.info("Uploaded a copy of sent email to IMAP 'Sent' folder.")
+            # Catch any failure during the IMAP upload process and log it as warning
+            except Exception as imap_err:
+                logger.warning("Could not copy sent email to IMAP 'Sent' folder: %s", imap_err)
+
         # Return True indicating successful email dispatch
         return True
     # Catch any connection, authentication or SMTP socket exception
@@ -379,17 +409,17 @@ This is the main worker loop and pipeline orchestrator.
 
 #### Snippet 5.1: Docstring & Imports
 ```python
-# Import json module to encode/decode message stream payloads
-import json
 # Import logging module to print structured messages
 import logging
+# Import socket module to retrieve host details
+import socket
 # Import time module to execute sleep delays
 import time
 
 # Import redis-py client
 import redis
-# Import mail filter AND and mailbox client from imap-tools
-from imap_tools import AND, MailBox
+# Import mail filters and mailbox client from imap-tools
+from imap_tools import AND, MailBox, OR
 
 # Import global settings loader
 from app.core.config import settings
@@ -509,8 +539,9 @@ graph TD
     FetchCheck -->|No| AckSkip
     FetchCheck -->|Yes| NormalizeSubject[Normalize Subject]:::process
     
-    NormalizeSubject --> FetchHistory[Fetch all matching thread messages]:::process
-    FetchHistory --> CleanHistory[Clean & Sort Thread History]:::process
+    NormalizeSubject --> QueryCandidates[Query IMAP: same subject AND sent by/to customer]:::process
+    QueryCandidates --> FilterChain[Python Filter: match Message-ID / References chain]:::process
+    FilterChain --> CleanHistory[Clean & Sort Thread History]:::process
     CleanHistory --> CloseIMAP[Close IMAP Connection]:::process
     
     CloseIMAP --> CheckDedupe{Redis EXISTS replied:Message-ID?}:::decision
@@ -525,7 +556,8 @@ graph TD
     Generate --> SendSMTP[Send SMTP Reply Email]:::process
     
     SendSMTP --> SendCheck{Email sent successfully?}:::decision
-    SendCheck -->|Yes| SetDedupe[SET replied:Message-ID EX 30 days]:::success
+    SendCheck -->|Yes| CopySent[IMAP: Upload copy to 'Sent' folder]:::success
+    CopySent --> SetDedupe[SET replied:Message-ID EX 30 days]:::success
     SendCheck -->|No| ErrorLog[Log Error & Skip ACK]:::errorState
     
     SetDedupe --> SuccessAck[XACK Stream Entry & Finish]:::success
@@ -616,23 +648,83 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
                         s = s[len(prefix):].strip()
                 return s.strip()
 
+            # Define helper function to extract all associated Message-IDs from email headers
+            def collect_thread_message_ids(message_id_: str, references_: str, in_reply_to_: str) -> set:
+                """
+                Collect every Message-ID that belongs to this email's thread,
+                based on RFC 2822/5322 threading headers (References / In-Reply-To).
+                This is the canonical way mail clients (Gmail, Outlook, Apple Mail)
+                group conversations — far more reliable than subject-text matching.
+                """
+                # Initialize an empty set to store the Message-IDs
+                ids = set()
+                # If a valid Message-ID exists, add it to the set
+                if message_id_:
+                    ids.add(message_id_)
+                # If a References header exists, split by space and add all IDs to the set
+                if references_:
+                    ids.update(references_.split())
+                # If an In-Reply-To header exists, add it to the set
+                if in_reply_to_:
+                    ids.add(in_reply_to_)
+                # Return the set of unique Message-IDs
+                return ids
+
             # Normalize current email subject
             norm_subj = normalize_subject(subject)
+            # Collect all known Message-IDs associated with this conversation thread
+            thread_msg_ids = collect_thread_message_ids(message_id, references, in_reply_to)
 
-            # Query inbox to fetch all emails matching normalized thread title
-            thread_messages = list(mailbox.fetch(AND(subject=norm_subj)))
+            # ── 1a. Narrow candidate pool server-side: same normalized subject
+            #        AND (sent by this customer OR sent to this customer).
+            #        This is cheap (IMAP-indexed) but NOT sufficient on its own —
+            #        two different customers can share an identical subject line
+            #        (e.g. "Refund request"), which would otherwise leak one
+            #        customer's thread into another's context.
+            candidates = list(
+                # Query IMAP to find candidates with matching subject and sent by/to this customer
+                mailbox.fetch(
+                    AND(subject=norm_subj) & OR(from_=from_email, to=from_email)
+                )
+            )
+
+            # ── 1b. Strict filter in Python using the Message-ID/References
+            #        chain, so we only keep messages that are *actually* part
+            #        of this exact conversation — not just same-subject noise
+            #        from a different customer, and not lost due to subject
+            #        text drift (extra "FWD:", translated "Re:", etc.).
+            if thread_msg_ids:
+                # Filter candidates to only keep emails matching the Message-ID/References chain
+                thread_messages = [
+                    m for m in candidates
+                    if m.obj.get("Message-ID", "").strip() in thread_msg_ids
+                    or (thread_msg_ids & set(m.obj.get("References", "").strip().split()))
+                    or (m.obj.get("In-Reply-To", "").strip() in thread_msg_ids)
+                ]
+                # Ensure the triggering message is always included in the thread context
+                if not any(m.obj.get("Message-ID", "").strip() == message_id for m in thread_messages):
+                    thread_messages.append(msg)
+            else:
+                # If no headers exist, fall back to the subject-matched candidate list
+                thread_messages = candidates or [msg]
+
             # Sort thread messages in chronological order
             thread_messages.sort(key=lambda m: m.date or m.date_str)
 
             # Compile text transcript of conversation history
             thread_history = ""
+            # Loop through sorted thread messages
             for m in thread_messages:
+                # Extract sender address
                 m_sender = m.from_
+                # Format message date to YYYY-MM-DD HH:MM:SS or fallback
                 m_date = m.date.strftime("%Y-%m-%d %H:%M:%S") if m.date else "Unknown Date"
+                # Retrieve body text, defaulting to HTML if text is empty
                 m_body = m.text.strip() if m.text else m.html.strip() if m.html else ""
                 
                 # Strip out reply quotes (lines starting with '>') to clean up prompt context
                 clean_lines = [line for line in m_body.splitlines() if not line.strip().startswith(">")]
+                # Join clean body lines back together
                 clean_body = "\n".join(clean_lines).strip()
                 
                 # Append clean message content to transcript history

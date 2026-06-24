@@ -1,6 +1,7 @@
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import make_msgid
 import logging
 from app.core.config import settings
 
@@ -23,14 +24,22 @@ def send_support_email(
         msg = MIMEMultipart()
         msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
         msg["To"] = to_email
+        
+        # Ensure reply subject starts with "Re:"
+        if subject and not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
         msg["Subject"] = subject
+
+        # Generate a unique Message-ID for this reply
+        msg["Message-ID"] = make_msgid()
 
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
         if references:
             msg["References"] = references
 
-        msg.attach(MIMEText(body_text, "plain"))
+        # Attach text body using explicit UTF-8 encoding
+        msg.attach(MIMEText(body_text, "plain", "utf-8"))
 
         if settings.SMTP_PORT == 465:
             server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
@@ -42,6 +51,19 @@ def send_support_email(
         server.send_message(msg)
         server.quit()
         logger.info("Successfully sent email to %s", to_email)
+
+        # Upload a copy of the sent email to IMAP "Sent" folder so it appears in mail UI
+        if settings.IMAP_USERNAME and settings.IMAP_PASSWORD:
+            try:
+                from imap_tools import MailBox
+                with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=10).login(
+                    settings.IMAP_USERNAME, settings.IMAP_PASSWORD
+                ) as mailbox:
+                    mailbox.append(msg.as_bytes(), "Sent")
+                logger.info("Uploaded a copy of sent email to IMAP 'Sent' folder.")
+            except Exception as imap_err:
+                logger.warning("Could not copy sent email to IMAP 'Sent' folder: %s", imap_err)
+
         return True
     except Exception as e:
         logger.error("Failed to send email via SMTP: %s", e)
