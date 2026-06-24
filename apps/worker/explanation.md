@@ -708,38 +708,52 @@ def run() -> None:
 
 #### Snippet 5.10: XREADGROUP Stream Listener Loop
 ```python
+    # Enter an infinite loop to keep the worker running and listening for stream jobs forever
     while True:
         try:
-            # XREADGROUP: block up to 5 seconds waiting for a new message.
-            # ">" means "give me messages not yet delivered to any consumer."
-            # COUNT 10 means process up to 10 emails per batch.
+            # Call Redis XREADGROUP to fetch brand-new, unassigned stream entries for our consumer group
             response = r.xreadgroup(
+                # Name of the consumer group handling load balancing (e.g. 'complaint-workers')
                 groupname=settings.REDIS_CONSUMER_GROUP,
+                # Unique name of this worker replica (the container hostname) to track pending entries
                 consumername=_hostname,
+                # Stream key to read from, using '>' to fetch only new/never-delivered messages
                 streams={settings.REDIS_STREAM_NAME: ">"},
+                # Maximum number of stream entries to fetch in this batch to avoid overloading
                 count=10,
-                block=5000,  # ms
+                # Block/wait for up to 5,000 milliseconds (5 seconds) if the stream is currently empty
+                block=5000,
             )
 
+            # If the response is empty (None or []), it means the blocking call timed out with no new messages
             if not response:
-                # Timeout — no new messages, loop back
+                # Return to the beginning of the loop to request new jobs again
                 continue
 
-            # response shape: [(stream_name, [(entry_id, fields_dict), ...])]
+            # Iterate over the stream batch responses returned by Redis (structured by stream name)
             for _stream_name, entries in response:
+                # Loop through each individual entry containing the unique message ID and the payload
                 for entry_id, fields in entries:
+                    # Pass the Redis client, entry ID, and fields dictionary to the message processor
                     _handle_message(r, entry_id, fields)
 
+        # Catch read timeout exception which occurs if the socket read expires during the blocking command
         except redis.exceptions.TimeoutError:
-            # Normal socket read timeout on blocking read (no messages)
+            # Safely continue to the next loop iteration without logging a warning or error
             continue
 
+        # Catch connection failure exceptions if the Redis container drops offline or becomes unreachable
         except redis.exceptions.ConnectionError as exc:
+            # Log the connection failure details to stdout for container diagnostics
             logger.error("Redis connection lost: %s — retrying in 5s…", exc)
+            # Wait for 5 seconds before trying again to prevent CPU spiking while Redis is offline
             time.sleep(5)
 
+        # Catch all other unexpected errors to prevent loop interruption or container crash
         except Exception as exc:  # noqa: BLE001
+            # Log the unexpected traceback and error details to stdout
             logger.error("Unexpected error in worker loop: %s", exc)
+            # Sleep for 1 second to throttle log output on persistent runtime bugs
             time.sleep(1)
 
 
