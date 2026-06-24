@@ -408,7 +408,7 @@ logger = logging.getLogger(__name__)
 ```python
 def _build_redis_client() -> redis.Redis:
     """Create Redis client with retry on startup."""
-    client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    client = redis.from_url(settings.REDIS_URL, decode_responses=True, socket_timeout=15)
     client.ping()
     logger.info("Connected to Redis at %s", settings.REDIS_URL)
     return client
@@ -443,7 +443,7 @@ def _ensure_consumer_group(r: redis.Redis) -> None:
 *   `r.xgroup_create(...)`: Creates consumer group.
 *   `id="$"`: Configures to read new messages added after creation.
 *   `mkstream=True`: Creates stream if missing.
-*   `except ResponseError as exc: if "BUSYGROUP" in str(exc):`: Catches already-exists errors silently when multiple replicas startup concurrently.
+*   `except ResponseError as exc: if "BUSYGROUP" in str(exc):`: Catches already-exists errors silently when multiple replicas startup concurrently. This ensures scaling works seamlessly: the first starting replica creates the group, and subsequent replicas safely reuse it.
 
 #### Snippet 5.4: Deduplication Key Creator
 ```python
@@ -660,13 +660,13 @@ def run() -> None:
                 for entry_id, fields in entries:
                     _handle_message(r, entry_id, fields)
 
+        except redis.exceptions.TimeoutError:
+            # Normal socket read timeout on blocking read (no messages)
+            continue
+
         except redis.exceptions.ConnectionError as exc:
-            logger.error("Redis connection lost: %s — reconnecting in 5s…", exc)
+            logger.error("Redis connection lost: %s — retrying in 5s…", exc)
             time.sleep(5)
-            try:
-                r = _build_redis_client()
-            except Exception:  # noqa: BLE001
-                pass
 
         except Exception as exc:  # noqa: BLE001
             logger.error("Unexpected error in worker loop: %s", exc)
@@ -679,5 +679,6 @@ if __name__ == "__main__":
 *   `r.xreadgroup(...)`: Blocks up to 5 seconds waiting for fresh un-allocated stream entries (`">"`) in database queue.
 *   `if not response: continue`: Loops back on polling timeout.
 *   `for entry_id, fields in entries: _handle_message(...)`: Iterates through batch items, triggering processing handler for each message.
-*   `except redis.exceptions.ConnectionError:`: Automatically attempts database client rebuild on connection loss.
-*   `except Exception as exc:`: Catches unhandled loops faults to maintain process uptime.
+*   `except redis.exceptions.TimeoutError:`: Catches normal read timeout exceptions on the blocking connection silently, returning to the top of the loop.
+*   `except redis.exceptions.ConnectionError:`: Logs lost connection errors and sleeps for 5 seconds. On the next iteration, the Redis client's internal connection pool will automatically attempt reconnection.
+*   `except Exception as exc:`: Catches unhandled loop faults to maintain process uptime.
