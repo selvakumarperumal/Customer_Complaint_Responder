@@ -237,16 +237,11 @@ def run() -> None:
                     _handle_message(r, entry_id, fields)
 
         except redis.exceptions.TimeoutError:
-            # Normal socket read timeout on blocking read (no messages)
             continue
 
         except redis.exceptions.ConnectionError as exc:
-            logger.error("Redis connection lost: %s — reconnecting in 5s…", exc)
+            logger.error("Redis connection lost: %s — retrying in 5s…", exc)
             time.sleep(5)
-            try:
-                r = _build_redis_client()
-            except Exception:  # noqa: BLE001
-                pass
 
         except Exception as exc:  # noqa: BLE001
             logger.error("Unexpected error in worker loop: %s", exc)
