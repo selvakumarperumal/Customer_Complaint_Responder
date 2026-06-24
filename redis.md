@@ -37,43 +37,61 @@ To make it easy, let's look at a real-world analogy:
 
 ---
 
-## 2. Simplified Execution Diagram
+## 2. How Multiple Workers Share the Load
 
-Here is the flow of a single email message through the system:
+Imagine 3 emails arrive. The Consumer Group hands each email to **only one** worker — no duplicates:
 
-```mermaid
-flowchart TD
-    %% Styling
-    classDef yellow fill:#fff2cc,stroke:#d6b656,stroke-width:2px;
-    classDef green fill:#d5e8d4,stroke:#82b366,stroke-width:2px;
-    classDef blue fill:#dae8fc,stroke:#6c8ebf,stroke-width:2px;
-
-    IMAP[📧 Namecheap Email Server]:::yellow
-    Poller[🔍 Poller Service]:::green
-    Stream[📝 Redis Stream]:::blue
-    Group[👥 Consumer Group Manager]:::blue
-    Worker[⚙️ Worker Service]:::green
-    Cache[💾 Deduplication Cache]:::blue
-    LLM[🤖 AI Agent]:::yellow
-
-    %% Flow
-    IMAP -->|1. Detects new email| Poller
-    Poller -->|2. Pushes UID to queue| Stream
-    Poller -->|3. Marks email read| IMAP
-    
-    Stream -->|4. Passes message| Group
-    Group -->|5. Hands task to Worker| Worker
-    
-    Worker -->|6. Checks 'Replied before?'| Cache
-    Worker -->|7. Fetches full email history| IMAP
-    Worker -->|8. Generates reply| LLM
-    Worker -->|9. Sends reply & saves to cache| Cache
-    Worker -->|10. Signals 'Done' ACK| Stream
+```
+Email A ──┐
+Email B ──┤──▶ [Consumer Group] ──┬──▶ Worker 1 gets Email A ✅
+Email C ──┘                       ├──▶ Worker 2 gets Email B ✅
+                                  └──▶ Worker 1 gets Email C ✅
+                                        (Worker 2 was busy)
 ```
 
 ---
 
-## 3. Core Concepts Explained Simply
+## 3. Simplified Flow Diagram
+
+```mermaid
+flowchart TD
+    classDef yellow fill:#fff2cc,stroke:#d6b656,stroke-width:2px;
+    classDef green fill:#d5e8d4,stroke:#82b366,stroke-width:2px;
+    classDef blue fill:#dae8fc,stroke:#6c8ebf,stroke-width:2px;
+    classDef orange fill:#fce5cd,stroke:#e69138,stroke-width:2px;
+
+    IMAP["📧 Email Server"]:::yellow
+    Poller["🔍 Poller"]:::green
+    Stream["📝 Redis Stream Queue"]:::blue
+    Group["👥 Consumer Group"]:::blue
+
+    W1["⚙️ Worker 1"]:::orange
+    W2["⚙️ Worker 2"]:::orange
+    W3["⚙️ Worker 3"]:::orange
+
+    Cache["💾 Dedupe Cache"]:::blue
+    LLM["🤖 AI Agent"]:::yellow
+
+    IMAP -->|1. New emails arrive| Poller
+    Poller -->|2. Push UIDs to queue| Stream
+    Stream -->|3. Distributes work| Group
+
+    Group -->|Email A| W1
+    Group -->|Email B| W2
+    Group -->|Email C| W3
+
+    W1 -->|4. Check, Process, Reply| LLM
+    W2 -->|4. Check, Process, Reply| LLM
+    W3 -->|4. Check, Process, Reply| LLM
+
+    W1 -->|5. Mark done| Cache
+    W2 -->|5. Mark done| Cache
+    W3 -->|5. Mark done| Cache
+```
+
+---
+
+## 4. Core Concepts Explained Simply
 
 ### A. What is a Redis Stream?
 A **Redis Stream** is a **durable, ordered queue**.
@@ -96,7 +114,7 @@ The **Deduplication Cache** is our **double-reply insurance policy**.
 
 ---
 
-## 4. Simple Command Guide
+## 5. Simple Command Guide
 
 Here are the 6 basic commands our code runs, translated into plain English:
 
@@ -156,7 +174,7 @@ Here are the 6 basic commands our code runs, translated into plain English:
 
 ---
 
-## 5. Useful Commands for Troubleshooting
+## 6. Useful Commands for Troubleshooting
 
 If you want to inspect what is happening inside the queue, open a terminal and run:
 
