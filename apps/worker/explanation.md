@@ -73,70 +73,68 @@ This script manages configurations using Pydantic Settings.
 
 #### Snippet 1.1: Imports & Class Declaration
 ```python
+# Import alias mapping and schema validation fields from Pydantic
 from pydantic import AliasChoices, Field
+# Import configuration loader and base settings class from Pydantic Settings
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Define the main settings class inheriting from Pydantic's BaseSettings
 class Settings(BaseSettings):
 ```
-*   `from pydantic import AliasChoices, Field`: Imports schema configuration helpers.
-*   `from pydantic_settings import BaseSettings, SettingsConfigDict`: Imports base configuration loaders.
-*   `class Settings(BaseSettings):`: Declares the configuration settings loader class.
 
 #### Snippet 1.2: AI & SMTP Settings
 ```python
-    # Google Gemini API
+    # Configures the Google Gemini API key, mapping both GOOGLE_API_KEY and GEMINI_API_KEY env variables
     GOOGLE_API_KEY: str = Field(
         validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY")
     )
+    # The default Gemini model name string to run our classifications and generations
     MODEL_NAME: str = "gemini-3.5-flash"
+    # Setting the generation temperature parameter to a deterministic low value (0.1)
     TEMPERATURE: float = 0.1
 
-    # Namecheap SMTP (for sending replies)
+    # Host address of the Namecheap Private Email SMTP server
     SMTP_HOST: str = "mail.privateemail.com"
+    # Standard STARTTLS SMTP port to establish secure outbound email connections
     SMTP_PORT: int = 587
+    # Outbound email sender username (email address) retrieved from environment configuration
     SMTP_USERNAME: str | None = None
+    # Outbound email sender account password retrieved from environment configuration
     SMTP_PASSWORD: str | None = None
+    # Email address of the sender used in SMTP envelopes
     SMTP_FROM_EMAIL: str | None = None
+    # Display sender name shown to recipients (e.g. "Customer Support")
     SMTP_FROM_NAME: str = "Customer Support"
 ```
-*   `GOOGLE_API_KEY: str = Field(...)`: Defines the API key as a string. `validation_alias=AliasChoices(...)` allows loading the key from either `GOOGLE_API_KEY` or `GEMINI_API_KEY` environment values.
-*   `MODEL_NAME: str = "gemini-3.5-flash"`: Specifies the LLM model name string, defaulting to Gemini 3.5 Flash.
-*   `TEMPERATURE: float = 0.1`: Sets the generation temperature float parameter, defaulting to a deterministic `0.1`.
-*   `SMTP_HOST: str = "mail.privateemail.com"`: SMTP hostname string.
-*   `SMTP_PORT: int = 587`: SMTP connection port integer, defaulting to STARTTLS port `587`.
-*   `SMTP_USERNAME: str | None = None`: SMTP username (email address).
-*   `SMTP_PASSWORD: str | None = None`: SMTP login credentials.
-*   `SMTP_FROM_EMAIL: str | None = None`: Configures the reply-from sender address.
-*   `SMTP_FROM_NAME: str = "Customer Support"`: Configures display name string.
 
 #### Snippet 1.3: IMAP, Redis settings & Instantiation
 ```python
-    # Namecheap IMAP Settings (for fetching emails)
+    # Host address of the Namecheap Private Email IMAP server
     IMAP_HOST: str = "mail.privateemail.com"
+    # Standard SSL IMAP port to check inbox messages
     IMAP_PORT: int = 993
+    # Username (email address) used to connect and log into the IMAP server
     IMAP_USERNAME: str | None = None
+    # Password of the IMAP account used to authenticate
     IMAP_PASSWORD: str | None = None
 
-    # Redis Settings
+    # Connection URL path of our Redis database server
     REDIS_URL: str = "redis://localhost:6379/0"
+    # Key name of the Redis Stream queue containing inbound email jobs
     REDIS_STREAM_NAME: str = "email:inbound"
+    # Consumer group name coordinating load balancing across active workers
     REDIS_CONSUMER_GROUP: str = "complaint-workers"
-    # How long (seconds) to remember a replied Message-ID (30 days)
+    # Expiration time (30 days in seconds) of Message-ID deduplication cache keys
     REDIS_DEDUPE_TTL: int = 2_592_000
 
+    # Configure Pydantic Settings search path for .env files and ignore extra keys
     model_config = SettingsConfigDict(env_file=("../../.env", ".env"), extra="ignore")
 
 
+# Instantiate the Settings class to parse and load all configurations
 settings = Settings()
 ```
-*   `IMAP_HOST / IMAP_PORT / IMAP_USERNAME / IMAP_PASSWORD`: Defines parameters for connecting to Namecheap IMAP.
-*   `REDIS_URL`: Defines the database connection string.
-*   `REDIS_STREAM_NAME`: Stream key to read from.
-*   `REDIS_CONSUMER_GROUP`: Name of the joint consumer group.
-*   `REDIS_DEDUPE_TTL`: Configures key survival duration (30 days in seconds).
-*   `model_config = SettingsConfigDict(...)`: Specifies environment configuration paths and extra variable ignoring.
-*   `settings = Settings()`: Instantiates config loading.
 
 ---
 
@@ -146,94 +144,97 @@ This script builds and dispatches the outgoing MIME emails.
 
 #### Snippet 2.1: Imports & Loggers
 ```python
+# Import the Python built-in SMTP protocol handler module
 import smtplib
+# Import the MIME multipart container class to construct email segments
 from email.mime.multipart import MIMEMultipart
+# Import the MIME text class to handle plain text email bodies
 from email.mime.text import MIMEText
+# Import the logging module to output structured diagnostic messages
 import logging
+# Import the global configuration instance containing SMTP credentials
 from app.core.config import settings
 
+# Create a logger instance scoped to this service file module
 logger = logging.getLogger(__name__)
 ```
-*   `import smtplib`: Imports Python's built-in SMTP protocol handler.
-*   `from email.mime.multipart import MIMEMultipart`: Imports container class for multi-part emails.
-*   `from email.mime.text import MIMEText`: Imports MIME format handler for text/plain bodies.
-*   `import logging`: Standard logging package.
-*   `from app.core.config import settings`: Imports application settings.
-*   `logger = logging.getLogger(__name__)`: Creates the logger instance.
 
 #### Snippet 2.2: Email Drafting & Dispatch Logic
 ```python
+# Define function to build and send outbound customer reply emails
 def send_support_email(
+    # Recipient email address
     to_email: str,
+    # Email subject string
     subject: str,
+    # Plain text content of the email reply body
     body_text: str,
+    # Thread identifier Message-ID being replied to
     in_reply_to: str | None = None,
+    # List of message reference IDs in the conversation thread
     references: str | None = None,
-) -> bool:
-    """Send an email using Namecheap Private Email SMTP."""
+) -> bool: # Returns boolean indicating whether SMTP dispatch succeeded
+    # Verify that all required SMTP login credentials and addresses are populated
     if not all([settings.SMTP_USERNAME, settings.SMTP_PASSWORD, settings.SMTP_FROM_EMAIL]):
+        # Log warning indicating SMTP cannot be invoked due to missing configuration
         logger.warning("SMTP credentials are not fully configured. Skipping email dispatch.")
+        # Return False to signify failed dispatch
         return False
 ```
-*   `def send_support_email(...) -> bool:`: Defines the email dispatch function, returning boolean status.
-*   `if not all([...]):`: Checks if credentials and sender settings are populated.
-*   `logger.warning(...)`: Warns about missing configs.
-*   `return False`: Aborts and returns `False`.
 
 #### Snippet 2.3: MIME Construction & Header Injection
 ```python
     try:
-        # Create message
+        # Create message container object handling standard multipart MIME formats
         msg = MIMEMultipart()
+        # Set the formatted "From" header containing support name and sender email
         msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
+        # Set the destination target recipient address header
         msg["To"] = to_email
+        # Set the email subject line header
         msg["Subject"] = subject
 
+        # If replying to a specific email, insert the In-Reply-To header
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
+        # If references exist, insert the References header to maintain threading on mail clients
         if references:
             msg["References"] = references
 
+        # Attach the reply body text as a plain text MIME segment
         msg.attach(MIMEText(body_text, "plain"))
 ```
-*   `try:`: Opens SMTP operations try block.
-*   `msg = MIMEMultipart()`: Instantiates the message structure object.
-*   `msg["From"] = ...`: Sets formatted display sender (e.g. `Customer Support <support@domain.com>`).
-*   `msg["To"] = to_email`: Sets target recipient.
-*   `msg["Subject"] = subject`: Sets email subject line.
-*   `if in_reply_to: msg["In-Reply-To"] = in_reply_to`: Sets threading pointer to link inside client inboxes.
-*   `if references: msg["References"] = references`: Sets conversation history references for client threading.
-*   `msg.attach(MIMEText(body_text, "plain"))`: Attaches plain text body content.
 
 #### Snippet 2.4: SMTP Connections & Login
 ```python
-        # Connect and send
+        # Check if the port requires direct SSL connection
         if settings.SMTP_PORT == 465:
+            # Connect using direct SMTP over SSL socket with a 10s connection timeout
             server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+        # If using standard port 587 or clear socket
         else:
+            # Connect using standard SMTP socket with a 10s connection timeout
             server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            # Upgrade the socket connection to encrypted TLS tunnel (STARTTLS)
             server.starttls()
 
+        # Log into the SMTP server using configuration credentials
         server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+        # Dispatch the compiled MIME message object to the recipient
         server.send_message(msg)
+        # Safely close the SMTP server connection
         server.quit()
+        # Log success info message
         logger.info("Successfully sent email to %s", to_email)
+        # Return True indicating successful email dispatch
         return True
+    # Catch any connection, authentication or SMTP socket exception
     except Exception as e:
+        # Log the error details for diagnostics
         logger.error("Failed to send email via SMTP: %s", e)
+        # Return False indicating failed email dispatch
         return False
 ```
-*   `if settings.SMTP_PORT == 465:`: If port is standard SSL:
-*   `server = smtplib.SMTP_SSL(...)`: Instantiates a secure SSL client.
-*   `else: server = smtplib.SMTP(...)`: Else connects over clear socket.
-*   `server.starttls()`: Upgrades clear connection to encrypted TLS channel (STARTTLS).
-*   `server.login(...)`: Authenticates with SMTP login credentials.
-*   `server.send_message(msg)`: Sends raw MIME email payload.
-*   `server.quit()`: Terminates socket connection safely.
-*   `logger.info(...)`: Logs successful delivery status.
-*   `return True`: Returns success.
-*   `except Exception as e:`: Captures SMTP or network exceptions.
-*   `logger.error(...)`: Logs failure traceback and returns `False`.
 
 ---
 
@@ -242,15 +243,22 @@ def send_support_email(
 This script declares prompts.
 
 ```python
+# Import the template composer class from LangChain core
 from langchain_core.prompts import ChatPromptTemplate
 
+# Compile prompt template for classification, forcing categorical answers
 category_prompt = ChatPromptTemplate.from_messages([
+    # System instruction template forcing worker agent to output only one string name
     ("system", "You are a helpful assistant that classifies customer complaints into one of these categories: delivery, refund, product issue, other. Respond with only the category name, nothing else."),
+    # Inject the raw chronological thread history as the user query context
     ("user", "Conversation Thread:\n{input}"),
 ])
 
+# Compile prompt template for support reply generation, injecting category context
 response_prompt = ChatPromptTemplate.from_messages([
+    # System persona template instructing AI to draft a response customized to the category
     ("system", "You are a helpful customer service assistant that generates professional and empathetic responses. The complaint category is: {complaint_type}."),
+    # Request generation based on the conversation thread context
     ("user", (
         "Generate a professional and empathetic response to the customer's latest request in the following conversation thread.\n\n"
         "Conversation Thread:\n{complaint}\n\n"
@@ -258,9 +266,6 @@ response_prompt = ChatPromptTemplate.from_messages([
     )),
 ])
 ```
-*   `from langchain_core.prompts import ChatPromptTemplate`: Imports the base chat prompt model compiler from LangChain.
-*   `category_prompt = ChatPromptTemplate.from_messages(...)`: Composes the pipeline classification prompt template. It contains a system instruction forcing category names and user injection block placeholder `{input}` containing the thread transcript.
-*   `response_prompt = ChatPromptTemplate.from_messages(...)`: Composes the response generation prompt template. Takes classification type variable `{complaint_type}` in system persona, and transcript variable `{complaint}` in user message block.
 
 ---
 
@@ -270,92 +275,101 @@ This script compiles the LangGraph State Graph.
 
 #### Snippet 4.1: Imports & State definition
 ```python
+# Import TypedDict structure to validate state graph payloads
 from typing import TypedDict
 
+# Import Google Gemini API client compiler from langchain-google-genai
 from langchain_google_genai import ChatGoogleGenerativeAI
+# Import graph nodes and graph compiler from LangGraph
 from langgraph.graph import END, START, StateGraph
 
+# Import global settings instance containing model and temperature configuration
 from app.core.config import settings
+# Import category classification and response templates
 from app.services.agent.prompts import category_prompt, response_prompt
 
 
-# Canonical LangGraph state pattern: TypedDict (NOT Pydantic BaseModel)
+# Declare State Graph schema containing inputs, classifications, and outputs
 class ComplaintState(TypedDict):
+    # Contains the full chronological conversation thread history
     complaint: str
+    # Contains the final resolved category class string
     complaint_type: str
+    # Contains the compiled final outbound support email text
     response: str
 ```
-*   `from typing import TypedDict`: Imports key-value type checker.
-*   `from langchain_google_genai import ChatGoogleGenerativeAI`: Imports Google Gemini LLM API compiler.
-*   `from langgraph.graph import END, START, StateGraph`: Imports graph components.
-*   `class ComplaintState(TypedDict):`: Declares state schema.
-*   `complaint: str`: Input thread history.
-*   `complaint_type: str`: Category.
-*   `response: str`: Output response.
 
 #### Snippet 4.2: Gemini & Chains Definition
 ```python
-# api_key is the preferred alias per langchain-google-genai reference docs
+# Initialize Google Gemini Chat Client using settings parameters
 _llm = ChatGoogleGenerativeAI(
+    # Load model name (gemini-3.5-flash)
     model=settings.MODEL_NAME,
+    # Configure generation temperature (0.1)
     temperature=settings.TEMPERATURE,
+    # Pass authenticated API key
     api_key=settings.GOOGLE_API_KEY,
 )
 
+# Compose the classification LCEL pipeline chain
 _classify_chain = category_prompt | _llm
+# Compose the response generation LCEL pipeline chain
 _response_chain = response_prompt | _llm
 ```
-*   `_llm = ChatGoogleGenerativeAI(...)`: Instantiates the Gemini client.
-*   `_classify_chain = category_prompt | _llm`: Composes the classification pipeline using LCEL syntax.
-*   `_response_chain = response_prompt | _llm`: Composes the response generation pipeline using LCEL syntax.
 
 #### Snippet 4.3: Node Implementations
 ```python
+# Define state graph node function for thread classification
 def _node_classify(state: ComplaintState) -> dict:
-    """Classify the complaint into a category."""
+    # Run the classification chain on the state's conversation thread history
     ai_response = _classify_chain.invoke({"input": state["complaint"]})
+    # Return dictionary updating the complaint_type key in the state graph
     return {"complaint_type": ai_response.text.strip().lower()}
 
 
+# Define state graph node function for response email drafting
 def _node_respond(state: ComplaintState) -> dict:
-    """Generate a professional response to the complaint."""
+    # Run response chain using thread history and classification category
     ai_response = _response_chain.invoke({
         "complaint": state["complaint"],
         "complaint_type": state["complaint_type"],
     })
+    # Return dictionary updating the response key in the state graph
     return {"response": ai_response.text}
 ```
-*   `def _node_classify(...) -> dict:`: Classification node logic. Invokes classification chain with the state's `complaint`. Returns dict containing category updates.
-*   `def _node_respond(...) -> dict:`: Response node logic. Invokes response chain with `complaint` transcript and `complaint_type` category. Returns dict containing final generated response text.
 
 #### Snippet 4.4: Graph Composition & wrapper function
 ```python
+# Initialize StateGraph object using State schema
 _workflow = StateGraph(ComplaintState)
+# Add classification node to graph directory
 _workflow.add_node("classify", _node_classify)
+# Add response node to graph directory
 _workflow.add_node("respond", _node_respond)
+# Connect graph start point directly to classification node
 _workflow.add_edge(START, "classify")
+# Connect classification node directly to response node
 _workflow.add_edge("classify", "respond")
+# Connect response node directly to graph termination point
 _workflow.add_edge("respond", END)
 
+# Compile graph into executable LangGraph app
 _app = _workflow.compile()
 
 
+# Define wrapper function to execute the LangGraph workflow pipeline
 def process_complaint(complaint_text: str, thread_id: str | None = None) -> dict:
-    """Run the LangGraph workflow and return classification + response."""
+    # Invoke LangGraph workflow with conversation state variables
     result = _app.invoke(
         {"complaint": complaint_text, "complaint_type": "", "response": ""}
     )
+    # Return compiled dict containing inputs, classifications, and responses
     return {
         "complaint": complaint_text,
         "complaint_type": result["complaint_type"],
         "response": result["response"],
     }
 ```
-*   `_workflow = StateGraph(ComplaintState)`: Instantiates the state workflow builder.
-*   `add_node(...)`: Registers nodes.
-*   `add_edge(...)`: Connects nodes.
-*   `compile()`: Builds executable graph.
-*   `def process_complaint(...)`: Wrapper entry function executing workflow and returning result dictionary.
 
 ---
 
@@ -365,34 +379,38 @@ This is the main worker loop and pipeline orchestrator.
 
 #### Snippet 5.1: Docstring & Imports
 ```python
-"""
-Worker microservice — entry point.
-[Responsibilities and Scaling metadata...]
-"""
-
+# Import json module to encode/decode message stream payloads
+import json
+# Import logging module to print structured messages
 import logging
-import socket
+# Import time module to execute sleep delays
 import time
 
+# Import redis-py client
 import redis
+# Import mail filter AND and mailbox client from imap-tools
 from imap_tools import AND, MailBox
 
+# Import global settings loader
 from app.core.config import settings
+# Import LangGraph execution pipeline wrapper
 from app.services.agent.agent import process_complaint
+# Import SMTP email service wrapper
 from app.services.email import send_support_email
 ```
-*   Standard imports: logger, socket (for container hostname), time, redis, `imap-tools` and app service modules.
 
 #### Snippet 5.2: Replica-logging Setup
 ```python
+# Configure basic logging properties with timezone and tags
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [worker/%(hostname)s] %(levelname)s %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 
-# Include hostname in every log line so you can distinguish replicas
+# Retrieve current container hostname to identify logs from individual worker replicas
 _hostname = socket.gethostname()
+# Inject hostname parameter directly into log formatter structure
 logging.getLogger().handlers[0].setFormatter(
     logging.Formatter(
         fmt=f"%(asctime)s [worker/{_hostname}] %(levelname)s %(message)s",
@@ -400,57 +418,58 @@ logging.getLogger().handlers[0].setFormatter(
     )
 )
 
+# Initialize logging context for the script module
 logger = logging.getLogger(__name__)
 ```
-*   Configures global logging system. Sets formatter to inject container `_hostname` dynamically into every log message, enabling troubleshooting across multiple running replicas.
 
 #### Snippet 5.3: Redis client & Consumer Group Checks
 ```python
+# Define function to construct Redis connection client with retry configurations
 def _build_redis_client() -> redis.Redis:
-    """Create Redis client with retry on startup."""
+    # Instantiate Redis client setting socket timeout parameter to 15s to handle block intervals
     client = redis.from_url(settings.REDIS_URL, decode_responses=True, socket_timeout=15)
+    # Validate connection immediately by executing a ping command
     client.ping()
+    # Log connection success details
     logger.info("Connected to Redis at %s", settings.REDIS_URL)
+    # Return client handle
     return client
 
 
+# Define function to establish joint stream consumer group
 def _ensure_consumer_group(r: redis.Redis) -> None:
-    """
-    Create the consumer group if it doesn't exist yet.
-    MKSTREAM creates the stream key if it's also missing.
-    '$' means: only process NEW messages added after group creation.
-    """
     try:
+        # Create group, setting consumer start point to '$' (new messages only)
         r.xgroup_create(
             name=settings.REDIS_STREAM_NAME,
             groupname=settings.REDIS_CONSUMER_GROUP,
             id="$",
-            mkstream=True,
+            mkstream=True, # Automatically creates stream queue key if it doesn't exist
         )
+        # Log consumer group creation details
         logger.info(
             "Created consumer group '%s' on stream '%s'.",
             settings.REDIS_CONSUMER_GROUP,
             settings.REDIS_STREAM_NAME,
         )
+    # Catch exceptions raised during Redis command execution
     except redis.exceptions.ResponseError as exc:
+        # If group already exists, allow execution to proceed (handled during scaling)
         if "BUSYGROUP" in str(exc):
-            # Group already exists — this is fine (other worker replica created it first)
+            # Log debug confirmation message
             logger.debug("Consumer group already exists — OK.")
+        # Raise any other critical Redis error
         else:
             raise
 ```
-*   `_ensure_consumer_group(r)`: Runs group initialization.
-*   `r.xgroup_create(...)`: Creates consumer group.
-*   `id="$"`: Configures to read new messages added after creation.
-*   `mkstream=True`: Creates stream if missing.
-*   `except ResponseError as exc: if "BUSYGROUP" in str(exc):`: Catches already-exists errors silently when multiple replicas startup concurrently. This ensures scaling works seamlessly: the first starting replica creates the group, and subsequent replicas safely reuse it.
 
 #### Snippet 5.4: Deduplication Key Creator
 ```python
+# Define helper function returning cache key naming convention for replies
 def _dedupe_key(message_id: str) -> str:
+    # Prepend key identifier prefix to message header ID
     return f"replied:{message_id}"
 ```
-*   Returns formatted Redis lookup key for deduplication check.
 
 ---
 
@@ -526,47 +545,62 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
     Process a single email from the stream by fetching it from IMAP using UID.
     Always ACKs the message if handled successfully or if it's an unrecoverable/skipped scenario.
     """
+    # Extract email UID string from stream payload parameters
     uid = fields.get("uid", "")
     
+    # Log incoming job details
     logger.info("Received job for email UID %s (stream_id=%s)", uid, stream_entry_id)
 
+    # Validate that UID is present in queue message
     if not uid:
+        # Log warning indicating empty UID payload
         logger.warning("No UID found in stream entry %s — skipping.", stream_entry_id)
-        
+        # Acknowledge entry immediately to remove it from consumer pending list
         r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
+        # Stop processing
         return
 
+    # Verify that IMAP email configurations are present
     if not (settings.IMAP_USERNAME and settings.IMAP_PASSWORD):
+        # Log critical configuration error details
         logger.error("IMAP settings are not configured in worker — cannot fetch email %s", uid)
-        
+        # Raise configuration error
         raise ValueError("IMAP settings are not configured in worker.")
 ```
-*   `uid = fields.get("uid", "")`: Extracts incoming email UID.
-*   `if not uid:`: If UID is empty, ignores it, acknowledges it (`xack`) to dequeue from stream, and returns.
-*   `if not (IMAP config)`: Raises validation error if mail credentials are missing on the worker container, preventing incorrect queue pop.
 
 #### Snippet 5.6: Processing Handler — On-Demand Thread Compiling
 ```python
     try:
-        # ── 1. Fetch email and its thread history from IMAP on-demand ────────
+        # Connect and authenticate with the IMAP server using a context manager
         with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
             settings.IMAP_USERNAME, settings.IMAP_PASSWORD
         ) as mailbox:
+            # Fetch the target email object using its specific UID
             messages = list(mailbox.fetch(AND(uid=uid)))
             
+            # Verify that target email exists in the mailbox
             if not messages:
+                # Log warning indicating email has been deleted or moved
                 logger.warning("Email with UID %s not found in mailbox — skipping.", uid)
-                
+                # Acknowledge message in Redis to remove it from PEL queue
                 r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
+                # Stop processing
                 return
             
+            # Extract main message object
             msg = messages[0]
+            # Get sender address
             from_email = msg.from_
+            # Get subject string, defaulting if empty
             subject = msg.subject or "(no subject)"
+            # Get unique Message-ID header
             message_id = msg.obj.get("Message-ID", "").strip()
+            # Get references headers (used to link messages in a thread)
             references = msg.obj.get("References", "").strip()
+            # Get reply mapping header
             in_reply_to = msg.obj.get("In-Reply-To", "").strip()
             
+            # Compile thread ID using headers, falling back to a hash of sender + subject
             thread_id = (
                 in_reply_to
                 or references
@@ -574,6 +608,7 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
                 or f"thread_{abs(hash(from_email + subject)) % 100_000}"
             )
 
+            # Define helper function to strip conversation prefixes (e.g. Re:, Fwd:)
             def normalize_subject(subj: str) -> str:
                 s = subj.lower()
                 for prefix in ["re:", "fwd:", "fw:"]:
@@ -581,22 +616,29 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
                         s = s[len(prefix):].strip()
                 return s.strip()
 
+            # Normalize current email subject
             norm_subj = normalize_subject(subject)
 
+            # Query inbox to fetch all emails matching normalized thread title
             thread_messages = list(mailbox.fetch(AND(subject=norm_subj)))
+            # Sort thread messages in chronological order
             thread_messages.sort(key=lambda m: m.date or m.date_str)
 
+            # Compile text transcript of conversation history
             thread_history = ""
             for m in thread_messages:
                 m_sender = m.from_
                 m_date = m.date.strftime("%Y-%m-%d %H:%M:%S") if m.date else "Unknown Date"
                 m_body = m.text.strip() if m.text else m.html.strip() if m.html else ""
                 
+                # Strip out reply quotes (lines starting with '>') to clean up prompt context
                 clean_lines = [line for line in m_body.splitlines() if not line.strip().startswith(">")]
                 clean_body = "\n".join(clean_lines).strip()
                 
+                # Append clean message content to transcript history
                 thread_history += f"From: {m_sender} (Date: {m_date})\nSubject: {m.subject}\nContent:\n{clean_body}\n\n---\n\n"
 
+        # Log compilation completion details
         logger.info(
             "Fetched thread history for subject=%r (%d message(s), message_id=%s)",
             subject,
@@ -604,54 +646,54 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
             message_id,
         )
 ```
-*   `mailbox.fetch(AND(uid=uid))`: Fetches target email object.
-*   `if not messages: r.xack(...)`: If message has been deleted/moved since polling, acknowledges it and aborts.
-*   `thread_id = ...`: Fallback algorithm creating unique string ID for tracking.
-*   `normalize_subject(subject)`: Removes standard forward/reply email subject prefixes.
-*   `mailbox.fetch(AND(subject=norm_subj))`: Fetches all emails matching normalized thread title.
-*   `thread_messages.sort(...)`: Sorts emails chronologically.
-*   `clean_lines = ...`: Filters out quoted text lines (starting with `>`), cleaning output.
-*   `thread_history += ...`: Formats and compiles the historical messages string transcript.
 
 #### Snippet 5.7: Processing Handler — Dedupe, Agent & Dispatch
 ```python
-        # ── 2. Dedupe check ─────────────────────────────────────────────────
+        # Check if Message-ID exists to run deduplication check
         if message_id:
+            # Generate cache key string
             key = _dedupe_key(message_id)
+            # Query Redis to verify if key exists (already responded)
             if r.exists(key):
+                # Log duplicate skip warning
                 logger.warning(
                     "Already replied to Message-ID %s — skipping duplicate.", message_id
                 )
                 
+                # Acknowledge queue message to clean up PEL list
                 r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
+                # Stop processing
                 return
+        # Log warning if Message-ID is empty
         else:
             logger.warning("Email has no Message-ID header — dedupe not possible.")
 
-        # ── 3. Validate ────────────────-------------------------------------
+        # Validate that sender address and history transcript are populated
         if not from_email or not thread_history.strip():
+            # Log skip warning
             logger.warning("Missing from_email or thread history — skipping.")
             
+            # Acknowledge queue message to clean up PEL list
             r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
+            # Stop processing
             return
 
-        # ── 4. Run LangGraph AI agent ────────────────────────────────────────
+        # Log LangGraph execution startup details
         logger.info("Running LangGraph complaint handler for thread_id=%s", thread_id)
         
+        # Execute LangGraph pipeline to get category classification and drafted response
         result = process_complaint(thread_history, thread_id=thread_id)
         
+        # Log resulting classification category
         logger.info("Classified as: %s", result["complaint_type"])
 ```
-*   `if r.exists(key):`: Checks if deduplication key exists in Redis. If yes, runs `xack()` to prevent duplicate reply.
-*   `if not from_email or not thread_history.strip():`: Aborts if email payload content is empty.
-*   `process_complaint(...)`: Invokes LangGraph processing pipeline.
 
 #### Snippet 5.8: Processing Handler — SMTP Send & Queue Acknowledge
 ```python
-        # ── 5. Build reply subject ──────────────────────────────────────────
+        # Build outbound reply subject string, prepending "Re: " prefix if not present
         reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
 
-        # ── 6. Send SMTP reply ──────────────────────────────────────────────
+        # Invoke SMTP mailer function to dispatch response email
         sent = send_support_email(
             to_email=from_email,
             subject=reply_subject,
@@ -660,42 +702,46 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
             references=f"{references} {message_id}".strip() or None,
         )
 
-        # ── 7. Mark as replied in Redis ─────────────────────────────────────
+        # Write deduplication cache key on successful email transmission
         if sent and message_id:
+            # Set replied key with configured 30-day TTL duration in Redis
             r.set(_dedupe_key(message_id), "1", ex=settings.REDIS_DEDUPE_TTL)
             
+            # Log cache entry write success
             logger.info("Marked Message-ID %s as replied (TTL=%ds).", message_id, settings.REDIS_DEDUPE_TTL)
 
-        # ── 8. Success ACK ──────────────────────────────────────────────────
+        # Acknowledge stream entry to remove job from consumer Pending List (PEL)
         r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
         
+        # Log final job completion success details
         logger.info("Successfully processed and ACKed stream entry %s", stream_entry_id)
 
+    # Catch general exceptions during message processing
     except Exception as exc:  # noqa: BLE001
+        # Log failure warning and keep entry in stream queue for retries
         logger.error("Error processing message %s: %s", stream_entry_id, exc)
 ```
-*   `reply_subject = ...`: Ensures outgoing subject starts with standard `Re:` prefix.
-*   `send_support_email(...)`: Sends outgoing reply email via SMTP.
-*   `r.set(...)`: Writes deduplication key with 30-day TTL.
-*   `r.xack(...)`: Acknowledges stream message, popping it from consumer group PEL.
-*   `except Exception as exc:`: Logs exception but does not run `XACK` on connection or API failures, enabling retry.
 
 #### Snippet 5.9: Worker Main loop
 ```python
 def run() -> None:
-    """Consume the Redis Stream forever."""
-
-    # Retry Redis connection on startup (Redis container may not be ready yet)
+    # Initialize connection client reference as empty
     r: redis.Redis | None = None
+    # Re-evaluate connection loop until client is initialized
     while r is None:
         try:
+            # Build and ping Redis client socket connection
             r = _build_redis_client()
+        # Catch connection failures during boot phase
         except Exception as exc:  # noqa: BLE001
+            # Log retry warning and sleep for 3s
             logger.warning("Redis not ready yet (%s) — retrying in 3s…", exc)
             time.sleep(3)
 
+    # Initialize consumer group parameters
     _ensure_consumer_group(r)
 
+    # Log service loop start details
     logger.info(
         "Worker started. stream=%s group=%s consumer=%s",
         settings.REDIS_STREAM_NAME,
@@ -703,8 +749,6 @@ def run() -> None:
         _hostname,
     )
 ```
-*   Initializes database client connection with standard startup retries.
-*   Invokes consumer group registration block.
 
 #### Snippet 5.10: XREADGROUP Stream Listener Loop
 ```python
@@ -760,26 +804,3 @@ def run() -> None:
 if __name__ == "__main__":
     run()
 ```
-*   `while True:`: Enters an infinite loop so the worker container runs forever, constantly listening for incoming jobs.
-*   `try:`: Opens the main try-except block to protect the infinite loop from crashing due to unexpected network drops or errors.
-*   `response = r.xreadgroup(`: Invokes the Redis `XREADGROUP` command to fetch messages as a member of a consumer group.
-*   `groupname=settings.REDIS_CONSUMER_GROUP,`: Identifies the group name (`complaint-workers`) that manages load balancing across all workers.
-*   `consumername=_hostname,`: Passes the specific container's hostname as the consumer name, which Redis uses to assign and track pending tasks in the Pending Entry List (PEL).
-*   `streams={settings.REDIS_STREAM_NAME: ">"},`: Specifies the Redis stream key to query, using the special `">"` ID value which tells Redis to only return new messages that have never been delivered to any other consumer in this group.
-*   `count=10,`: Restricts the read size to a maximum of 10 stream entries per batch to prevent overloading the worker replica.
-*   `block=5000,`: Instructs Redis to block (wait) for up to 5,000 milliseconds (5 seconds) if there are no new messages in the queue, returning immediately as soon as a new message is pushed.
-*   `if not response:`: Checks if the response is empty (which happens if the 5-second block timed out with zero new messages in the stream).
-*   `continue`: Returns to the beginning of the `while True:` loop to issue another read command.
-*   `for _stream_name, entries in response:`: Iterates through the list of stream responses returned by Redis (since `xread` can query multiple streams at once).
-*   `for entry_id, fields in entries:`: Loops through the batch of message entries (consisting of the unique stream ID and payload fields) returned for the stream.
-*   `_handle_message(r, entry_id, fields)`: Dispatches the entry ID and payload dictionary (containing the email UID) to the message handler to compile history, process via LangGraph, and send SMTP replies.
-*   `except redis.exceptions.TimeoutError:`: Catches the socket read timeout raised if the blocking read expires without receiving data.
-*   `continue`: Ignores it and safely loops back to poll again.
-*   `except redis.exceptions.ConnectionError as exc:`: Catches connection loss errors when the Redis server goes offline.
-*   `logger.error("Redis connection lost: %s — retrying in 5s…", exc)`: Logs a connection lost warning.
-*   `time.sleep(5)`: Sleeps for 5 seconds to throttle retries and avoid spamming log outputs while the database is offline.
-*   `except Exception as exc:`: Catches all other unexpected standard exceptions to prevent the worker container from crashing.
-*   `logger.error("Unexpected error in worker loop: %s", exc)`: Logs the unexpected traceback for diagnostics.
-*   `time.sleep(1)`: Sleeps for 1 second before retrying the loop to prevent tight loop utilization on errors.
-*   `if __name__ == "__main__":`: Python entrypoint check to ensure the worker starts running only when executed directly as a script.
-*   `run()`: Invokes the main initialization and loop orchestration function.
