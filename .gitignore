@@ -220,6 +220,9 @@ __marimo__/
 # Local variable files with secrets (environments/*.tfvars ARE versioned — no secrets there)
 terraform.tfvars
 *.auto.tfvars
+*.tfvars
+*.hcl*
+*.conf*
 
 # Local overrides (machine-specific, not for sharing)
 override.tf
@@ -268,6 +271,10 @@ backend.conf
 *.conf
 backend.hcl
 *.hcl
+**/*.conf
+**/*.hcl
+**/*.env
+**/*.tfvars
 
 # Additional sensitive credentials & security files
 kubeconfig
