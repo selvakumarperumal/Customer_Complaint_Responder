@@ -266,6 +266,8 @@ tmp/
 *.tfvars
 backend.conf
 *.conf
+backend.hcl
+*.hcl
 
 # Additional sensitive credentials & security files
 kubeconfig

@@ -1,5 +1,0 @@
-# S3 Backend configuration values (replace <AWS_ACCOUNT_ID> with your actual AWS account ID)
-bucket         = "ccr-tfstate-bucket-001-<AWS_ACCOUNT_ID>"
-key            = "infra/terraform.tfstate"
-region         = "ap-south-1"
-dynamodb_table = "ccr-tfstate-dynamodb-001-<AWS_ACCOUNT_ID>"

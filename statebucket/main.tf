@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.0"
     }
+    local = {
+      source  = "hashicorp/local"
+      version = ">= 2.0"
+    }
   }
 }
 
@@ -45,5 +49,15 @@ module "dynamodb_table" {
   tags = {
     Name = "${var.lock_table_name_prefix}-${data.aws_caller_identity.current.account_id}"
   }
+}
+
+resource "local_file" "backend_config" {
+  content  = <<EOT
+bucket         = "${module.s3_bucket.s3_bucket_id}"
+key            = "backend/terraform.tfstate"
+region         = "${var.aws_region}"
+dynamodb_table = "${module.dynamodb_table.dynamodb_table_id}"
+EOT
+  filename = "${path.module}/../infra/backend.hcl"
 }
 
