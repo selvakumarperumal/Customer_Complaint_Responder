@@ -261,7 +261,7 @@ ehthumbs.db
 tmp/
 
 # Terraform cache
-.terraform.lock.hcl
+**/.terraform.lock.hcl
 .terraform/
 *.tfvars
 
