@@ -1,21 +1,12 @@
-aws_region                = "ap-south-1"
-project_name              = "customer-complaint-responder"
-vpc_cidr                  = "10.0.0.0/16"
-public_subnets_cidrs      = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
-private_subnets_cidrs     = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
-kubernetes_version        = "1.29"
-ecr_repository_names      = ["poller", "worker"]
-private_mail_host         = "mail.privateemail.com"
-imap_port                 = "993"
-smtp_port                 = "587"
-redis_stream_name         = "email:inbound"
-redis_consumer_group_name = "ccr-complaint-worker"
-
-# Sensitive variables (replace with your actual credentials/secrets)
-google_api_key        = "YOUR_GOOGLE_API_KEY"
-mistral_api_key       = "YOUR_MISTRAL_API_KEY"
-private_mail_email_id = "your-email@example.com"
-private_mail_password = "your-email-password"
-
-# Optional: ArgoCD private GitHub repository token (if used)
-github_pat            = "ghp_xxxxxxxxxxxxxxxxxxxx"
+aws_region                = "your_aws_region_here"
+project_name              = "your_project_name_here"
+vpc_cidr                  = "your_vpc_cidr_here"
+public_subnets_cidrs      = ["your_public_subnet_1_cidr", "your_public_subnet_2_cidr", "your_public_subnet_3_cidr"]
+private_subnets_cidrs     = ["your_private_subnet_1_cidr", "your_private_subnet_2_cidr", "your_private_subnet_3_cidr"]
+kubernetes_version        = "your_kubernetes_version_here"
+ecr_repository_names      = ["your_repository_name_1", "your_repository_name_2"]
+private_mail_host         = "your_private_mail_host_here"
+imap_port                 = "your_imap_port_here"
+smtp_port                 = "your_smtp_port_here"
+redis_stream_name         = "your_redis_stream_name_here"
+redis_consumer_group_name = "your_redis_consumer_group_name_here"
