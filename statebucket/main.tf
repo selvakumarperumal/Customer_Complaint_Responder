@@ -56,7 +56,6 @@ resource "local_file" "backend_config" {
 bucket         = "${module.s3_bucket.s3_bucket_id}"
 key            = "infra/terraform.tfstate"
 region         = "${var.aws_region}"
-dynamodb_table = "${module.dynamodb_table.dynamodb_table_id}"
 use_lockfile   = true
 EOT
   filename = "${path.module}/../infra/backend.hcl"
