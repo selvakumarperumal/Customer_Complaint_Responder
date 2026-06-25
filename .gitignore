@@ -259,3 +259,17 @@ ehthumbs.db
 
 # Temporary directory
 tmp/
+
+# Terraform cache
+.terraform.lock.hcl
+.terraform/
+*.tfvars
+
+# Additional sensitive credentials & security files
+kubeconfig
+*kubeconfig*
+*.pem
+*.key
+
+# Terraform local lock files
+*.tfstate.lock.info
