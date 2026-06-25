@@ -33,24 +33,6 @@ module "s3_bucket" {
   }
 }
 
-module "dynamodb_table" {
-  source = "terraform-aws-modules/dynamodb-table/aws"
-
-  name = "${var.lock_table_name_prefix}-${data.aws_caller_identity.current.account_id}"
-
-  hash_key = "LockID"
-
-  attributes = [
-    { name = "LockID", type = "S" }
-  ]
-
-  billing_mode = "PAY_PER_REQUEST"
-
-  tags = {
-    Name = "${var.lock_table_name_prefix}-${data.aws_caller_identity.current.account_id}"
-  }
-}
-
 resource "local_file" "backend_config" {
   content  = <<EOT
 bucket         = "${module.s3_bucket.s3_bucket_id}"
