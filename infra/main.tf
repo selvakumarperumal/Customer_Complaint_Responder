@@ -5,11 +5,16 @@ data "aws_availability_zones" "available" {}
 
 terraform {
   backend "s3" {
-    bucket       = "${var.state_bucket_name_prefix}-${data.aws_caller_identity.current.account_id}"
-    key          = "infra/terraform.tfstate"
-    region       = var.aws_region
-    use_lockfile = true
-    lock_table   = "${var.state_lock_table_name_prefix}-${data.aws_caller_identity.current.account_id}"
+    # Backend configuration cannot contain variables or data sources.
+    # Initialize using a backend config file:
+    #   terraform init -backend-config=backend.conf
+    #
+    # Or pass them via command-line arguments:
+    #   terraform init \
+    #     -backend-config="bucket=ccr-tfstate-bucket-001-<ACCOUNT_ID>" \
+    #     -backend-config="key=infra/terraform.tfstate" \
+    #     -backend-config="region=ap-south-1" \
+    #     -backend-config="dynamodb_table=ccr-tfstate-dynamodb-001-<ACCOUNT_ID>"
   }
 }
 

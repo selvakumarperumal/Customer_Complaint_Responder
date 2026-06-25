@@ -264,6 +264,8 @@ tmp/
 **/.terraform.lock.hcl
 .terraform/
 *.tfvars
+backend.conf
+*.conf
 
 # Additional sensitive credentials & security files
 kubeconfig
