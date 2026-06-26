@@ -78,18 +78,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #### Snippet 1.2: IMAP Settings Definition
 ```python
 class Settings(BaseSettings):
-    # Namecheap IMAP Settings
-    IMAP_HOST: str = "mail.privateemail.com"
+    # Namecheap Private Email Settings
+    HOST: str = "mail.privateemail.com"
     IMAP_PORT: int = 993
-    IMAP_USERNAME: str | None = None
-    IMAP_PASSWORD: str | None = None
+    PRIVATE_MAIL_EMAIL_ID: str | None = None
+    PRIVATE_MAIL_PASSWORD: str | None = None
     IMAP_POLL_INTERVAL: int = 60  # seconds between inbox checks
 ```
 *   `class Settings(BaseSettings):`: Declares the configuration class. Inheriting from `BaseSettings` triggers Pydantic to lookup matching environment variables automatically on instantiation.
-*   `IMAP_HOST: str = "mail.privateemail.com"`: Defines the host address of the IMAP mail server as a string, defaulting to Namecheap Private Email (`mail.privateemail.com`).
+*   `HOST: str = "mail.privateemail.com"`: Defines the host address of the Private Email mail server as a string, defaulting to Namecheap Private Email (`mail.privateemail.com`).
 *   `IMAP_PORT: int = 993`: Defines the IMAP port as an integer, defaulting to `993` (standard IMAP over SSL).
-*   `IMAP_USERNAME: str | None = None`: Declares the mail server username (email address). It is typed as string or `None`, defaulting to `None`.
-*   `IMAP_PASSWORD: str | None = None`: Declares the password for the email account, defaulting to `None`.
+*   `PRIVATE_MAIL_EMAIL_ID: str | None = None`: Declares the mail server username (email address). It is typed as string or `None`, defaulting to `None`.
+*   `PRIVATE_MAIL_PASSWORD: str | None = None`: Declares the password for the email account, defaulting to `None`.
 *   `IMAP_POLL_INTERVAL: int = 60`: Defines the loop sleep duration (in seconds) between mailbox checks, defaulting to `60` seconds.
 
 #### Snippet 1.3: Redis Settings Definition
@@ -190,8 +190,8 @@ def poll_once(r: redis.Redis) -> int:
     and mark them as SEEN on success.
     Returns the number of emails published.
     """
-    username = settings.IMAP_USERNAME
-    password = settings.IMAP_PASSWORD
+    username = settings.PRIVATE_MAIL_EMAIL_ID
+    password = settings.PRIVATE_MAIL_PASSWORD
 
     if not (username and password):
         logger.warning("IMAP credentials not configured — skipping poll.")
@@ -200,8 +200,8 @@ def poll_once(r: redis.Redis) -> int:
     published = 0
 ```
 *   `def poll_once(r: redis.Redis) -> int:`: Defines the single-run polling function. Takes a active Redis client.
-*   `username = settings.IMAP_USERNAME`: Extracts the IMAP username.
-*   `password = settings.IMAP_PASSWORD`: Extracts the IMAP password.
+*   `username = settings.PRIVATE_MAIL_EMAIL_ID`: Extracts the IMAP username.
+*   `password = settings.PRIVATE_MAIL_PASSWORD`: Extracts the IMAP password.
 *   `if not (username and password):`: If either credential field is missing, skip checking the mailbox.
 *   `logger.warning(...)`: Warns about missing configuration credentials.
 *   `return 0`: Safely aborts and returns 0 processed items.
@@ -210,7 +210,7 @@ def poll_once(r: redis.Redis) -> int:
 #### Snippet 2.5: Polling Logic — IMAP Fetch & Redis Push Loop
 ```python
     try:
-        with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
+        with MailBox(settings.HOST, port=settings.IMAP_PORT, timeout=15).login(
             username, password
         ) as mailbox:
             # Fetch UIDs of all unseen emails
@@ -235,7 +235,7 @@ def poll_once(r: redis.Redis) -> int:
                     logger.error("Failed to process UID %s: %s", uid, exc)
 ```
 *   `try:`: Opens the main try-catch block for IMAP operations.
-*   `with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(username, password) as mailbox:`:
+*   `with MailBox(settings.HOST, port=settings.IMAP_PORT, timeout=15).login(username, password) as mailbox:`:
     *   `MailBox(...)`: Creates the client with configured host and SSL port, setting a connection timeout of 15 seconds.
     *   `.login(...)`: Logs in with credentials.
     *   `as mailbox`: Standard python context manager ensures connection closes properly at the block's end.

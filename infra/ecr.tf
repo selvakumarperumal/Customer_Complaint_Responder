@@ -18,7 +18,7 @@ module "ecr" {
         }
 
         selection = {
-          tagStatus   = "tagged"
+          tagStatus   = "any"
           countType   = "imageCountMoreThan"
           countNumber = 10
         }

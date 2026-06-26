@@ -10,5 +10,7 @@ module "karpenter" {
   }
 
   node_iam_role_use_name_prefix = false
-  node_iam_role_name            = "${module.eks.cluster_name}-karpenter-node-role"
+  node_iam_role_name            = "karpenter-node-role"
+
+  enable_inline_policy = true
 }

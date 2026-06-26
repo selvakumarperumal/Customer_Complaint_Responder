@@ -3,10 +3,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    IMAP_HOST: str = "mail.privateemail.com"
+    HOST: str = "mail.privateemail.com"
     IMAP_PORT: int = 993
-    IMAP_USERNAME: str | None = None
-    IMAP_PASSWORD: str | None = None
+    PRIVATE_MAIL_EMAIL_ID: str | None = None
+    PRIVATE_MAIL_PASSWORD: str | None = None
     IMAP_POLL_INTERVAL: int = 60
 
     REDIS_URL: str = "redis://localhost:6379/0"

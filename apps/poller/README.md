@@ -36,10 +36,10 @@ The poller relies on the following environment variables (typically supplied via
 
 | Variable | Description | Default |
 |---|---|---|
-| `IMAP_HOST` | Namecheap IMAP server address | `mail.privateemail.com` |
+| `HOST` | Namecheap Private Email host address | `mail.privateemail.com` |
 | `IMAP_PORT` | Namecheap IMAP port (SSL) | `993` |
-| `IMAP_USERNAME` | Support inbox username | *(required)* |
-| `IMAP_PASSWORD` | Support inbox password | *(required)* |
+| `PRIVATE_MAIL_EMAIL_ID` | Support inbox email ID | *(required)* |
+| `PRIVATE_MAIL_PASSWORD` | Support inbox password | *(required)* |
 | `IMAP_POLL_INTERVAL` | Seconds between inbox checks | `60` |
 | `REDIS_URL` | Redis server URL | `redis://localhost:6379/0` |
 | `REDIS_STREAM_NAME` | Redis Stream to publish to | `email:inbound` |

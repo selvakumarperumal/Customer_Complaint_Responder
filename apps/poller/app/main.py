@@ -43,8 +43,8 @@ def poll_once(r: redis.Redis) -> int:
     and mark them as SEEN on success.
     Returns the number of emails published.
     """
-    username = settings.IMAP_USERNAME
-    password = settings.IMAP_PASSWORD
+    username = settings.PRIVATE_MAIL_EMAIL_ID
+    password = settings.PRIVATE_MAIL_PASSWORD
 
     if not (username and password):
         logger.warning("IMAP credentials not configured — skipping poll.")
@@ -52,7 +52,7 @@ def poll_once(r: redis.Redis) -> int:
 
     published = 0
     try:
-        with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
+        with MailBox(settings.HOST, port=settings.IMAP_PORT, timeout=15).login(
             username, password
         ) as mailbox:
             unseen_uids = mailbox.uids(AND(seen=False))
@@ -66,7 +66,7 @@ def poll_once(r: redis.Redis) -> int:
                     payload = {"uid": uid}
                     stream_id = r.xadd(settings.REDIS_STREAM_NAME, payload)
                     mailbox.flag(uid, MailMessageFlags.SEEN, True)
-                    
+
                     published += 1
                     logger.info("Published UID %s → stream entry %s and marked SEEN.", uid, stream_id)
                 except Exception as exc:  # noqa: BLE001

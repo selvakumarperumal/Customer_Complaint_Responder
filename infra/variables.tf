@@ -37,13 +37,13 @@ variable "private_subnets_cidrs" {
 variable "project_name" {
   description = "Project name"
   type        = string
-  default     = "customer-complaint-responder"
+  default     = "complaint-responder"
 }
 
 variable "kubernetes_version" {
   description = "Kubernetes version"
   type        = string
-  default     = "1.29"
+  default     = "1.36"
 }
 
 variable "ecr_repository_names" {
@@ -92,6 +92,12 @@ variable "smtp_port" {
   description = "SMTP port"
   type        = string
   default     = "587"
+}
+
+variable "imap_poll_interval" {
+  description = "IMAP poll interval"
+  type        = string
+  default     = "60"
 }
 
 variable "redis_stream_name" {

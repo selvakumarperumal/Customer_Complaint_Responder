@@ -5,6 +5,13 @@ resource "helm_release" "argocd" {
   namespace  = "argocd"
 
   create_namespace = true
+  cleanup_on_fail  = true
+  replace          = true
+  force_update     = true
+  timeout          = 600
+  wait             = false
+
+  depends_on = [module.eks]
 }
 
 # For future reference if using a private GitHub repository for ArgoCD GitOps:

@@ -23,21 +23,42 @@ module "eks" {
         role = "system"
       }
 
+      # Lock the door — only pods with a matching toleration can land here
       taints = {
-        system_only = {
-          key    = "criticalAddonsOnly"
+        critical_addons = {
+          key    = "CriticalAddonsOnly"
           value  = "true"
-          effect = "NoSchedule"
+          effect = "NO_SCHEDULE"
         }
       }
     }
   }
 
   addons = {
-    coredns                = {}
+    # DaemonSets — kube-proxy, vpc-cni, eks-pod-identity-agent already ship
+    # with a built-in wildcard toleration (operator: Exists, no key), so
+    # they need no patching here. They'll run on the system node group
+    # regardless of the taint above.
     kube-proxy             = {}
     vpc-cni                = {}
     eks-pod-identity-agent = {}
+
+    # CoreDNS is a Deployment, not a DaemonSet — it ships with NO
+    # toleration by default, so without this patch it would get stuck
+    # Pending on a tainted-only cluster.
+    coredns = {
+      configuration_values = jsonencode({
+        tolerations = [
+          {
+            key      = "CriticalAddonsOnly"
+            operator = "Exists"
+          }
+        ]
+        nodeSelector = {
+          role = "system"
+        }
+      })
+    }
   }
 
   node_security_group_tags = {

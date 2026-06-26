@@ -16,15 +16,15 @@ def send_support_email(
     references: str | None = None,
 ) -> bool:
     """Send an email using Namecheap Private Email SMTP."""
-    if not all([settings.SMTP_USERNAME, settings.SMTP_PASSWORD, settings.SMTP_FROM_EMAIL]):
+    if not all([settings.PRIVATE_MAIL_EMAIL_ID, settings.PRIVATE_MAIL_PASSWORD]):
         logger.warning("SMTP credentials are not fully configured. Skipping email dispatch.")
         return False
 
     try:
         msg = MIMEMultipart()
-        msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
+        msg["From"] = f"{settings.FROM_NAME} <{settings.PRIVATE_MAIL_EMAIL_ID}>"
         msg["To"] = to_email
-        
+
         # Ensure reply subject starts with "Re:"
         if subject and not subject.lower().startswith("re:"):
             subject = f"Re: {subject}"
@@ -42,22 +42,22 @@ def send_support_email(
         msg.attach(MIMEText(body_text, "plain", "utf-8"))
 
         if settings.SMTP_PORT == 465:
-            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            server = smtplib.SMTP_SSL(settings.HOST, settings.SMTP_PORT, timeout=10)
         else:
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            server = smtplib.SMTP(settings.HOST, settings.SMTP_PORT, timeout=10)
             server.starttls()
 
-        server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+        server.login(settings.PRIVATE_MAIL_EMAIL_ID, settings.PRIVATE_MAIL_PASSWORD)
         server.send_message(msg)
         server.quit()
         logger.info("Successfully sent email to %s", to_email)
 
         # Upload a copy of the sent email to IMAP "Sent" folder so it appears in mail UI
-        if settings.IMAP_USERNAME and settings.IMAP_PASSWORD:
+        if settings.PRIVATE_MAIL_EMAIL_ID and settings.PRIVATE_MAIL_PASSWORD:
             try:
                 from imap_tools import MailBox
-                with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=10).login(
-                    settings.IMAP_USERNAME, settings.IMAP_PASSWORD
+                with MailBox(settings.HOST, port=settings.IMAP_PORT, timeout=10).login(
+                    settings.PRIVATE_MAIL_EMAIL_ID, settings.PRIVATE_MAIL_PASSWORD
                 ) as mailbox:
                     mailbox.append(msg.as_bytes(), "Sent")
                 logger.info("Uploaded a copy of sent email to IMAP 'Sent' folder.")

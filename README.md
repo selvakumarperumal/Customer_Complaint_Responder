@@ -257,17 +257,14 @@ cp .env.example .env
 | Variable | Used By | Description | Default |
 |---|---|---|---|
 | `GEMINI_API_KEY` | worker | Google Gemini API key | *(required)* |
-| `IMAP_HOST` | both | IMAP server hostname | `mail.privateemail.com` |
+| `MISTRAL_API_KEY` | worker | Mistral API key | *(optional)* |
+| `HOST` | both | Private Email server hostname | `mail.privateemail.com` |
+| `PRIVATE_MAIL_EMAIL_ID` | both | Email address to poll/send | *(required)* |
+| `PRIVATE_MAIL_PASSWORD` | both | Email account password | *(required)* |
 | `IMAP_PORT` | both | IMAP server port (SSL) | `993` |
-| `IMAP_USERNAME` | both | Email address to poll | *(required)* |
-| `IMAP_PASSWORD` | both | Email account password | *(required)* |
 | `IMAP_POLL_INTERVAL` | poller | Seconds between inbox checks | `60` |
-| `SMTP_HOST` | worker | SMTP server hostname | `mail.privateemail.com` |
 | `SMTP_PORT` | worker | SMTP port (STARTTLS) | `587` |
-| `SMTP_USERNAME` | worker | SMTP login username | *(required)* |
-| `SMTP_PASSWORD` | worker | SMTP login password | *(required)* |
-| `SMTP_FROM_EMAIL` | worker | Reply-from email address | *(required)* |
-| `SMTP_FROM_NAME` | worker | Reply-from display name | `Customer Support` |
+| `FROM_NAME` | worker | Support reply display name | `Customer Support` |
 | `REDIS_URL` | both | Redis connection string | `redis://redis:6379/0` |
 | `REDIS_STREAM_NAME` | both | Stream key name | `email:inbound` |
 | `REDIS_CONSUMER_GROUP` | worker | Consumer group name | `complaint-workers` |
@@ -327,7 +324,7 @@ customer_complaint...-worker  Up (x2)
 
 ### 5. Send a test email
 
-Send an email to your support inbox (the address in `IMAP_USERNAME`). Within `IMAP_POLL_INTERVAL` seconds you should see:
+Send an email to your support inbox (the address in `PRIVATE_MAIL_EMAIL_ID`). Within `IMAP_POLL_INTERVAL` seconds you should see:
 
 ```
 # In poller logs:

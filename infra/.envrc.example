@@ -1,0 +1,4 @@
+export TF_VAR_google_api_key=your-google-api-key-here
+export TF_VAR_mistral_api_key=your-mistral-api-key-here
+export TF_VAR_private_mail_password=your-namecheap-mail-password-here
+export TF_VAR_private_mail_email_id=your-namecheap-mail-id-here

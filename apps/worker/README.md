@@ -47,16 +47,13 @@ The worker relies on the following environment variables (typically supplied via
 | Variable | Description | Default |
 |---|---|---|
 | `GEMINI_API_KEY` | Google Gemini API key | *(required)* |
-| `IMAP_HOST` | Namecheap IMAP server address | `mail.privateemail.com` |
+| `MISTRAL_API_KEY` | Mistral API key | *(optional)* |
+| `HOST` | Namecheap Private Email host address | `mail.privateemail.com` |
+| `PRIVATE_MAIL_EMAIL_ID` | Private Email ID | *(required)* |
+| `PRIVATE_MAIL_PASSWORD` | Private Email password | *(required)* |
 | `IMAP_PORT` | Namecheap IMAP port (SSL) | `993` |
-| `IMAP_USERNAME` | Support inbox username | *(required)* |
-| `IMAP_PASSWORD` | Support inbox password | *(required)* |
-| `SMTP_HOST` | Namecheap SMTP server address | `mail.privateemail.com` |
 | `SMTP_PORT` | Namecheap SMTP port (STARTTLS) | `587` |
-| `SMTP_USERNAME` | SMTP login username | *(required)* |
-| `SMTP_PASSWORD` | SMTP login password | *(required)* |
-| `SMTP_FROM_EMAIL` | Sender email address | *(required)* |
-| `SMTP_FROM_NAME` | Support display name | `Customer Support` |
+| `FROM_NAME` | Support display name | `Customer Support` |
 | `REDIS_URL` | Redis server URL | `redis://localhost:6379/0` |
 | `REDIS_STREAM_NAME` | Redis Stream to consume from | `email:inbound` |
 | `REDIS_CONSUMER_GROUP` | Consumer group name | `complaint-workers` |

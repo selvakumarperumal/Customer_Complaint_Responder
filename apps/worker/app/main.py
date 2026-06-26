@@ -100,15 +100,15 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
         r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
         return
 
-    if not (settings.IMAP_USERNAME and settings.IMAP_PASSWORD):
+    if not (settings.PRIVATE_MAIL_EMAIL_ID and settings.PRIVATE_MAIL_PASSWORD):
         logger.error("IMAP settings are not configured in worker — cannot fetch email %s", uid)
         
         raise ValueError("IMAP settings are not configured in worker.")
 
     try:
         # ── 1. Fetch email and its thread history from IMAP on-demand ────────
-        with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
-            settings.IMAP_USERNAME, settings.IMAP_PASSWORD
+        with MailBox(settings.HOST, port=settings.IMAP_PORT, timeout=15).login(
+            settings.PRIVATE_MAIL_EMAIL_ID, settings.PRIVATE_MAIL_PASSWORD
         ) as mailbox:
             messages = list(mailbox.fetch(AND(uid=uid)))
             

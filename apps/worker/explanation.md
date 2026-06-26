@@ -85,7 +85,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
 ```
 
-#### Snippet 1.2: AI & SMTP Settings
+#### Snippet 1.2: AI & Private Email Settings
 ```python
     # Configures the Google Gemini API key, mapping both GOOGLE_API_KEY and GEMINI_API_KEY env variables
     GOOGLE_API_KEY: str = Field(
@@ -96,31 +96,24 @@ class Settings(BaseSettings):
     # Setting the generation temperature parameter to a deterministic low value (0.1)
     TEMPERATURE: float = 0.1
 
-    # Host address of the Namecheap Private Email SMTP server
-    SMTP_HOST: str = "mail.privateemail.com"
-    # Standard STARTTLS SMTP port to establish secure outbound email connections
-    SMTP_PORT: int = 587
-    # Outbound email sender username (email address) retrieved from environment configuration
-    SMTP_USERNAME: str | None = None
-    # Outbound email sender account password retrieved from environment configuration
-    SMTP_PASSWORD: str | None = None
-    # Email address of the sender used in SMTP envelopes
-    SMTP_FROM_EMAIL: str | None = None
-    # Display sender name shown to recipients (e.g. "Customer Support")
-    SMTP_FROM_NAME: str = "Customer Support"
-```
+    # Host address of the Namecheap Private Email SMTP/IMAP server
+    HOST: str = "mail.privateemail.com"
+    # Account password retrieved from environment configuration
+    PRIVATE_MAIL_PASSWORD: str | None = None
+    # Username (email address) retrieved from environment configuration
+    PRIVATE_MAIL_EMAIL_ID: str | None = None
 
-#### Snippet 1.3: IMAP, Redis settings & Instantiation
-```python
-    # Host address of the Namecheap Private Email IMAP server
-    IMAP_HOST: str = "mail.privateemail.com"
     # Standard SSL IMAP port to check inbox messages
     IMAP_PORT: int = 993
-    # Username (email address) used to connect and log into the IMAP server
-    IMAP_USERNAME: str | None = None
-    # Password of the IMAP account used to authenticate
-    IMAP_PASSWORD: str | None = None
+    # Standard STARTTLS SMTP port to establish secure outbound email connections
+    SMTP_PORT: int = 587
 
+    # Display sender name shown to recipients (e.g. "Customer Support")
+    FROM_NAME: str = "Customer Support"
+```
+
+#### Snippet 1.3: Redis settings & Instantiation
+```python
     # Connection URL path of our Redis database server
     REDIS_URL: str = "redis://localhost:6379/0"
     # Key name of the Redis Stream queue containing inbound email jobs
@@ -178,8 +171,8 @@ def send_support_email(
     # List of message reference IDs in the conversation thread
     references: str | None = None,
 ) -> bool: # Returns boolean indicating whether SMTP dispatch succeeded
-    # Verify that all required SMTP login credentials and addresses are populated
-    if not all([settings.SMTP_USERNAME, settings.SMTP_PASSWORD, settings.SMTP_FROM_EMAIL]):
+    # Verify that all required login credentials are populated
+    if not all([settings.PRIVATE_MAIL_EMAIL_ID, settings.PRIVATE_MAIL_PASSWORD]):
         # Log warning indicating SMTP cannot be invoked due to missing configuration
         logger.warning("SMTP credentials are not fully configured. Skipping email dispatch.")
         # Return False to signify failed dispatch
@@ -192,7 +185,7 @@ def send_support_email(
         # Create message container object handling standard multipart MIME formats
         msg = MIMEMultipart()
         # Set the formatted "From" header containing support name and sender email
-        msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
+        msg["From"] = f"{settings.FROM_NAME} <{settings.PRIVATE_MAIL_EMAIL_ID}>"
         # Set the destination target recipient address header
         msg["To"] = to_email
 
@@ -222,16 +215,16 @@ def send_support_email(
         # Check if the port requires direct SSL connection
         if settings.SMTP_PORT == 465:
             # Connect using direct SMTP over SSL socket with a 10s connection timeout
-            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            server = smtplib.SMTP_SSL(settings.HOST, settings.SMTP_PORT, timeout=10)
         # If using standard port 587 or clear socket
         else:
             # Connect using standard SMTP socket with a 10s connection timeout
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            server = smtplib.SMTP(settings.HOST, settings.SMTP_PORT, timeout=10)
             # Upgrade the socket connection to encrypted TLS tunnel (STARTTLS)
             server.starttls()
 
         # Log into the SMTP server using configuration credentials
-        server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+        server.login(settings.PRIVATE_MAIL_EMAIL_ID, settings.PRIVATE_MAIL_PASSWORD)
         # Dispatch the compiled MIME message object to the recipient
         server.send_message(msg)
         # Safely close the SMTP server connection
@@ -240,13 +233,13 @@ def send_support_email(
         logger.info("Successfully sent email to %s", to_email)
 
         # Upload a copy of the sent email to IMAP "Sent" folder so it appears in mail UI
-        if settings.IMAP_USERNAME and settings.IMAP_PASSWORD:
+        if settings.PRIVATE_MAIL_EMAIL_ID and settings.PRIVATE_MAIL_PASSWORD:
             try:
                 # Import MailBox from imap_tools dynamically
                 from imap_tools import MailBox
                 # Connect to the IMAP server and login using credentials
-                with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=10).login(
-                    settings.IMAP_USERNAME, settings.IMAP_PASSWORD
+                with MailBox(settings.HOST, port=settings.IMAP_PORT, timeout=10).login(
+                    settings.PRIVATE_MAIL_EMAIL_ID, settings.PRIVATE_MAIL_PASSWORD
                 ) as mailbox:
                     # Append the compiled MIME message as raw bytes to the "Sent" folder
                     mailbox.append(msg.as_bytes(), "Sent")
@@ -593,7 +586,7 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
         return
 
     # Verify that IMAP email configurations are present
-    if not (settings.IMAP_USERNAME and settings.IMAP_PASSWORD):
+    if not (settings.PRIVATE_MAIL_EMAIL_ID and settings.PRIVATE_MAIL_PASSWORD):
         # Log critical configuration error details
         logger.error("IMAP settings are not configured in worker — cannot fetch email %s", uid)
         # Raise configuration error
@@ -604,8 +597,8 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
 ```python
     try:
         # Connect and authenticate with the IMAP server using a context manager
-        with MailBox(settings.IMAP_HOST, port=settings.IMAP_PORT, timeout=15).login(
-            settings.IMAP_USERNAME, settings.IMAP_PASSWORD
+        with MailBox(settings.HOST, port=settings.IMAP_PORT, timeout=15).login(
+            settings.PRIVATE_MAIL_EMAIL_ID, settings.PRIVATE_MAIL_PASSWORD
         ) as mailbox:
             # Fetch the target email object using its specific UID
             messages = list(mailbox.fetch(AND(uid=uid)))
