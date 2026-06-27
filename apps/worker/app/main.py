@@ -28,18 +28,11 @@ from app.core.config import settings
 from app.services.agent.agent import process_complaint
 from app.services.email import send_support_email
 
+_hostname = socket.gethostname()
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [worker/%(hostname)s] %(levelname)s %(message)s",
+    format=f"%(asctime)s [worker/{_hostname}] %(levelname)s %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
-)
-
-_hostname = socket.gethostname()
-logging.getLogger().handlers[0].setFormatter(
-    logging.Formatter(
-        fmt=f"%(asctime)s [worker/{_hostname}] %(levelname)s %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
-    )
 )
 
 logger = logging.getLogger(__name__)
@@ -166,7 +159,7 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
             #        customer's thread into another's context.
             candidates = list(
                 mailbox.fetch(
-                    AND(subject=norm_subj) & OR(from_=from_email, to=from_email)
+                    AND(OR(from_=from_email, to=from_email), subject=norm_subj)
                 )
             )
 
