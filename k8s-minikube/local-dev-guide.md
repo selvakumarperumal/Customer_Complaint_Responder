@@ -145,3 +145,35 @@ All Kubernetes manifests are in the `k8s-minikube/` directory:
 | `redis.yaml` | Redis Deployment + Service (in `ccr` namespace) |
 | `poller.yaml` | Poller Deployment (1 replica only, in `ccr` namespace) |
 | `worker.yaml` | Worker Deployment (2 replicas, scalable, in `ccr` namespace) |
+
+---
+
+## Troubleshooting
+
+### 1. `ErrImageNeverPull`
+If your pods are stuck with the `ErrImageNeverPull` status:
+* **Reason**: The Docker images were built on the host machine but are not available inside Minikube's Docker daemon.
+* **Solution**: Either build them inside Minikube or load them from the host:
+  ```bash
+  # Option 1: Load host-built images directly into Minikube
+  minikube image load ccr-poller:latest
+  minikube image load ccr-worker:latest
+  
+  # Option 2: Rebuild them directly inside Minikube
+  eval $(minikube docker-env)
+  docker build -t ccr-poller:latest ./apps/poller
+  docker build -t ccr-worker:latest ./apps/worker
+  ```
+
+### 2. `CreateContainerConfigError`
+If your pods are stuck with `CreateContainerConfigError`:
+* **Reason**: The Kubernetes secret `ccr-secrets` is missing or has a typo (e.g. named `ccr-secret`).
+* **Solution**: Re-create the secret in the `ccr` namespace with the exact plural name:
+  ```bash
+  kubectl create secret generic ccr-secrets --from-env-file=.env -n ccr
+  ```
+  Then restart your pods to pick it up:
+  ```bash
+  kubectl rollout restart deployment/poller -n ccr
+  kubectl rollout restart deployment/worker -n ccr
+  ```
