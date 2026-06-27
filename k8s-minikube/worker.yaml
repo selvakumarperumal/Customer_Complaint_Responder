@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# Worker — safe to scale.
+# Reads from Redis Stream, runs LangGraph AI agent, sends SMTP reply.
+# Stream consumer group handles deduplication automatically.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    app: worker
+spec:
+  replicas: 2  # Scale freely — stream consumer group handles deduplication
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: ccr-worker:latest
+          imagePullPolicy: Never  # Use local image, don't pull from registry
+          envFrom:
+            - secretRef:
+                name: ccr-secrets
+          env:
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

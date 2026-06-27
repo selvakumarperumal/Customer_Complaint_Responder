@@ -1,0 +1,40 @@
+# ---------------------------------------------------------------------------
+# Poller — ONE replica only.
+# Polls Namecheap IMAP, marks emails SEEN, publishes to Redis Stream.
+# NEVER scale above 1 — IMAP has no built-in locking.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: poller
+  labels:
+    app: poller
+spec:
+  replicas: 1  # MUST stay 1 — IMAP has no built-in locking
+  strategy:
+    type: Recreate  # Kill old pod before starting new — prevents duplicate polling
+  selector:
+    matchLabels:
+      app: poller
+  template:
+    metadata:
+      labels:
+        app: poller
+    spec:
+      containers:
+        - name: poller
+          image: ccr-poller:latest
+          imagePullPolicy: Never  # Use local image, don't pull from registry
+          envFrom:
+            - secretRef:
+                name: ccr-secrets
+          env:
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

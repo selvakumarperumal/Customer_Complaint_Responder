@@ -17,8 +17,6 @@ provider "aws" {
 
 data "aws_caller_identity" "current" {}
 
-
-
 module "s3_bucket" {
   source = "terraform-aws-modules/s3-bucket/aws"
 

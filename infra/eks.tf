@@ -1,5 +1,6 @@
 module "eks" {
-  source = "terraform-aws-modules/eks/aws"
+  source  = "terraform-aws-modules/eks/aws"
+  version = "~> 21.0"
 
   name               = local.cluster_name
   kubernetes_version = var.kubernetes_version
@@ -14,7 +15,9 @@ module "eks" {
 
   eks_managed_node_groups = {
     system = {
-      instance_types = ["m5.large"]
+      # Cost optimization: t3.medium ($0.0416/hr) vs m5.large ($0.096/hr)
+      # System node runs ArgoCD, CoreDNS, Karpenter — 2 vCPU / 4 GiB is plenty
+      instance_types = ["t3.medium"]
       min_size       = 1
       max_size       = 2
       desired_size   = 1
@@ -35,29 +38,20 @@ module "eks" {
   }
 
   addons = {
-    # DaemonSets — kube-proxy, vpc-cni, eks-pod-identity-agent already ship
-    # with a built-in wildcard toleration (operator: Exists, no key), so
-    # they need no patching here. They'll run on the system node group
-    # regardless of the taint above.
-    kube-proxy             = {}
-    vpc-cni                = {}
-    eks-pod-identity-agent = {}
+    # before_compute = true ensures these addons are installed BEFORE
+    # the node group is created. Without this, the module creates addons
+    # AFTER node groups (depends_on), but nodes need VPC CNI to get
+    # networking and become Ready — causing a deadlock:
+    #   node group waits for Ready → needs VPC CNI → waits for node group
+    vpc-cni = {
+      before_compute = true
+    }
 
-    # CoreDNS is a Deployment, not a DaemonSet — it ships with NO
-    # toleration by default, so without this patch it would get stuck
-    # Pending on a tainted-only cluster.
-    coredns = {
-      configuration_values = jsonencode({
-        tolerations = [
-          {
-            key      = "CriticalAddonsOnly"
-            operator = "Exists"
-          }
-        ]
-        nodeSelector = {
-          role = "system"
-        }
-      })
+    kube-proxy = {}
+    coredns    = {}
+
+    eks-pod-identity-agent = {
+      before_compute = true
     }
   }
 
