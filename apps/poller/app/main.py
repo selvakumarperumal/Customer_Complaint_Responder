@@ -37,11 +37,23 @@ def _build_redis_client() -> redis.Redis:
     return client
 
 
+def _process_email_uid(r: redis.Redis, mailbox: MailBox, uid: str) -> bool:
+    """Publish a single email UID to the Redis stream and mark it as SEEN on success."""
+    try:
+        payload = {"uid": uid}
+        stream_id = r.xadd(settings.REDIS_STREAM_NAME, payload)
+        mailbox.flag(uid, MailMessageFlags.SEEN, True)
+        logger.info("Published UID %s → stream entry %s and marked SEEN.", uid, stream_id)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to process UID %s: %s", uid, exc)
+        return False
+
+
 def poll_once(r: redis.Redis) -> int:
     """
-    Open IMAP, find all UNSEEN message UIDs, publish each UID to the Redis Stream,
-    and mark them as SEEN on success.
-    Returns the number of emails published.
+    Open IMAP, find all UNSEEN message UIDs, and process them.
+    Returns the number of emails successfully published.
     """
     username = settings.PRIVATE_MAIL_EMAIL_ID
     password = settings.PRIVATE_MAIL_PASSWORD
@@ -62,15 +74,8 @@ def poll_once(r: redis.Redis) -> int:
             logger.info("Found %d unseen email(s) in INBOX.", len(unseen_uids))
 
             for uid in unseen_uids:
-                try:
-                    payload = {"uid": uid}
-                    stream_id = r.xadd(settings.REDIS_STREAM_NAME, payload)
-                    mailbox.flag(uid, MailMessageFlags.SEEN, True)
-
+                if _process_email_uid(r, mailbox, uid):
                     published += 1
-                    logger.info("Published UID %s → stream entry %s and marked SEEN.", uid, stream_id)
-                except Exception as exc:  # noqa: BLE001
-                    logger.error("Failed to process UID %s: %s", uid, exc)
 
     except Exception as exc:  # noqa: BLE001
         logger.error("IMAP connection/fetch error: %s", exc)
