@@ -78,24 +78,110 @@ def _dedupe_key(message_id: str) -> str:
 # Message processing
 # ---------------------------------------------------------------------------
 
+def normalize_subject(subj: str) -> str:
+    """Remove Re:/Fwd: prefixes from subject line."""
+    s = subj.lower()
+    for prefix in ["re:", "fwd:", "fw:"]:
+        if s.startswith(prefix):
+            s = s[len(prefix):].strip()
+    return s.strip()
+
+
+def collect_thread_message_ids(message_id: str, references: str, in_reply_to: str) -> set[str]:
+    """Collect all Message-IDs associated with this email thread for strict filtering."""
+    ids = set()
+    if message_id:
+        ids.add(message_id)
+    if references:
+        ids.update(references.split())
+    if in_reply_to:
+        ids.add(in_reply_to)
+    return ids
+
+
+def get_email_thread(mailbox: MailBox, uid: str) -> dict | None:
+    """Fetch email by UID and build its thread history based on headers/subject."""
+    messages = list(mailbox.fetch(AND(uid=uid)))
+    if not messages:
+        return None
+
+    msg = messages[0]
+    from_email = msg.from_
+    subject = msg.subject or "(no subject)"
+    message_id = msg.obj.get("Message-ID", "").strip()
+    references = msg.obj.get("References", "").strip()
+    in_reply_to = msg.obj.get("In-Reply-To", "").strip()
+
+    thread_id = (
+        in_reply_to
+        or references
+        or message_id
+        or f"thread_{abs(hash(from_email + subject)) % 100_000}"
+    )
+
+    norm_subj = normalize_subject(subject)
+    thread_msg_ids = collect_thread_message_ids(message_id, references, in_reply_to)
+
+    # 1. Fetch same-subject candidates sent by/to this customer
+    candidates = list(
+        mailbox.fetch(
+            AND(OR(from_=from_email, to=from_email), subject=norm_subj)
+        )
+    )
+
+    # 2. Strict Python-side filter using Message-ID/References chain
+    if thread_msg_ids:
+        thread_messages = [
+            m for m in candidates
+            if m.obj.get("Message-ID", "").strip() in thread_msg_ids
+            or (thread_msg_ids & set(m.obj.get("References", "").strip().split()))
+            or (m.obj.get("In-Reply-To", "").strip() in thread_msg_ids)
+        ]
+        if not any(m.obj.get("Message-ID", "").strip() == message_id for m in thread_messages):
+            thread_messages.append(msg)
+    else:
+        thread_messages = candidates or [msg]
+
+    thread_messages.sort(key=lambda m: m.date or m.date_str)
+
+    # 3. Construct clean thread string
+    thread_history = ""
+    for m in thread_messages:
+        m_sender = m.from_
+        m_date = m.date.strftime("%Y-%m-%d %H:%M:%S") if m.date else "Unknown Date"
+        m_body = m.text.strip() if m.text else m.html.strip() if m.html else ""
+
+        clean_lines = [line for line in m_body.splitlines() if not line.strip().startswith(">")]
+        clean_body = "\n".join(clean_lines).strip()
+
+        thread_history += f"From: {m_sender} (Date: {m_date})\nSubject: {m.subject}\nContent:\n{clean_body}\n\n---\n\n"
+
+    return {
+        "from_email": from_email,
+        "subject": subject,
+        "message_id": message_id,
+        "references": references,
+        "thread_id": thread_id,
+        "thread_history": thread_history,
+        "message_count": len(thread_messages),
+    }
+
+
 def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
     """
     Process a single email from the stream by fetching it from IMAP using UID.
     Always ACKs the message if handled successfully or if it's an unrecoverable/skipped scenario.
     """
     uid = fields.get("uid", "")
-    
     logger.info("Received job for email UID %s (stream_id=%s)", uid, stream_entry_id)
 
     if not uid:
         logger.warning("No UID found in stream entry %s — skipping.", stream_entry_id)
-        
         r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
         return
 
     if not (settings.PRIVATE_MAIL_EMAIL_ID and settings.PRIVATE_MAIL_PASSWORD):
         logger.error("IMAP settings are not configured in worker — cannot fetch email %s", uid)
-        
         raise ValueError("IMAP settings are not configured in worker.")
 
     try:
@@ -103,105 +189,24 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
         with MailBox(settings.HOST, port=settings.IMAP_PORT, timeout=15).login(
             settings.PRIVATE_MAIL_EMAIL_ID, settings.PRIVATE_MAIL_PASSWORD
         ) as mailbox:
-            messages = list(mailbox.fetch(AND(uid=uid)))
-            
-            if not messages:
-                logger.warning("Email with UID %s not found in mailbox — skipping.", uid)
-                
-                r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
-                return
-            
-            msg = messages[0]
-            from_email = msg.from_
-            subject = msg.subject or "(no subject)"
-            message_id = msg.obj.get("Message-ID", "").strip()
-            references = msg.obj.get("References", "").strip()
-            in_reply_to = msg.obj.get("In-Reply-To", "").strip()
-            
-            thread_id = (
-                in_reply_to
-                or references
-                or message_id
-                or f"thread_{abs(hash(from_email + subject)) % 100_000}"
-            )
+            thread_data = get_email_thread(mailbox, uid)
 
-            def normalize_subject(subj: str) -> str:
-                s = subj.lower()
-                for prefix in ["re:", "fwd:", "fw:"]:
-                    if s.startswith(prefix):
-                        s = s[len(prefix):].strip()
-                return s.strip()
+        if not thread_data:
+            logger.warning("Email with UID %s not found in mailbox — skipping.", uid)
+            r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
+            return
 
-            def collect_thread_message_ids(message_id_: str, references_: str, in_reply_to_: str) -> set:
-                """
-                Collect every Message-ID that belongs to this email's thread,
-                based on RFC 2822/5322 threading headers (References / In-Reply-To).
-                This is the canonical way mail clients (Gmail, Outlook, Apple Mail)
-                group conversations — far more reliable than subject-text matching.
-                """
-                ids = set()
-                if message_id_:
-                    ids.add(message_id_)
-                if references_:
-                    ids.update(references_.split())
-                if in_reply_to_:
-                    ids.add(in_reply_to_)
-                return ids
-
-            norm_subj = normalize_subject(subject)
-            thread_msg_ids = collect_thread_message_ids(message_id, references, in_reply_to)
-
-            # ── 1a. Narrow candidate pool server-side: same normalized subject
-            #        AND (sent by this customer OR sent to this customer).
-            #        This is cheap (IMAP-indexed) but NOT sufficient on its own —
-            #        two different customers can share an identical subject line
-            #        (e.g. "Refund request"), which would otherwise leak one
-            #        customer's thread into another's context.
-            candidates = list(
-                mailbox.fetch(
-                    AND(OR(from_=from_email, to=from_email), subject=norm_subj)
-                )
-            )
-
-            # ── 1b. Strict filter in Python using the Message-ID/References
-            #        chain, so we only keep messages that are *actually* part
-            #        of this exact conversation — not just same-subject noise
-            #        from a different customer, and not lost due to subject
-            #        text drift (extra "FWD:", translated "Re:", etc.).
-            if thread_msg_ids:
-                thread_messages = [
-                    m for m in candidates
-                    if m.obj.get("Message-ID", "").strip() in thread_msg_ids
-                    or (thread_msg_ids & set(m.obj.get("References", "").strip().split()))
-                    or (m.obj.get("In-Reply-To", "").strip() in thread_msg_ids)
-                ]
-                # Always include the triggering message itself, even if its
-                # own Message-ID logic above didn't catch it (e.g. first
-                # message in a thread, no prior References to match against).
-                if not any(m.obj.get("Message-ID", "").strip() == message_id for m in thread_messages):
-                    thread_messages.append(msg)
-            else:
-                # No usable threading headers at all (rare) — fall back to the
-                # participant-narrowed, subject-matched candidate pool as-is.
-                thread_messages = candidates or [msg]
-
-            thread_messages.sort(key=lambda m: m.date or m.date_str)
-
-            thread_history = ""
-            for m in thread_messages:
-                m_sender = m.from_
-                m_date = m.date.strftime("%Y-%m-%d %H:%M:%S") if m.date else "Unknown Date"
-                m_body = m.text.strip() if m.text else m.html.strip() if m.html else ""
-                
-                clean_lines = [line for line in m_body.splitlines() if not line.strip().startswith(">")]
-                clean_body = "\n".join(clean_lines).strip()
-                
-                thread_history += f"From: {m_sender} (Date: {m_date})\nSubject: {m.subject}\nContent:\n{clean_body}\n\n---\n\n"
+        from_email = thread_data["from_email"]
+        subject = thread_data["subject"]
+        message_id = thread_data["message_id"]
+        references = thread_data["references"]
+        thread_id = thread_data["thread_id"]
+        thread_history = thread_data["thread_history"]
 
         logger.info(
             "Fetched thread history for subject=%r (%d message(s), message_id=%s)",
             subject,
-            len(thread_messages),
+            thread_data["message_count"],
             message_id,
         )
 
@@ -212,24 +217,20 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
                 logger.warning(
                     "Already replied to Message-ID %s — skipping duplicate.", message_id
                 )
-                
                 r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
                 return
         else:
             logger.warning("Email has no Message-ID header — dedupe not possible.")
 
-        # ── 3. Validate ────────────────-------------------------------------
+        # ── 3. Validate ─────────────────────────────────────────────────────
         if not from_email or not thread_history.strip():
             logger.warning("Missing from_email or thread history — skipping.")
-            
             r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
             return
 
         # ── 4. Run LangGraph AI agent ────────────────────────────────────────
         logger.info("Running LangGraph complaint handler for thread_id=%s", thread_id)
-        
         result = process_complaint(thread_history, thread_id=thread_id)
-        
         logger.info("Classified as: %s", result["complaint_type"])
 
         # ── 5. Build reply subject ──────────────────────────────────────────
@@ -247,12 +248,10 @@ def _handle_message(r: redis.Redis, stream_entry_id: str, fields: dict) -> None:
         # ── 7. Mark as replied in Redis ─────────────────────────────────────
         if sent and message_id:
             r.set(_dedupe_key(message_id), "1", ex=settings.REDIS_DEDUPE_TTL)
-            
             logger.info("Marked Message-ID %s as replied (TTL=%ds).", message_id, settings.REDIS_DEDUPE_TTL)
 
         # ── 8. Success ACK ──────────────────────────────────────────────────
         r.xack(settings.REDIS_STREAM_NAME, settings.REDIS_CONSUMER_GROUP, stream_entry_id)
-        
         logger.info("Successfully processed and ACKed stream entry %s", stream_entry_id)
 
     except Exception as exc:  # noqa: BLE001
