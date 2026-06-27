@@ -45,16 +45,13 @@ docker images | grep ccr
 ### 3. Deploy
 
 ```bash
-# Create namespace
-kubectl create namespace ccr
-
 # Create the secret from your .env file
 kubectl create secret generic ccr-secrets \
   --from-env-file=.env \
   -n ccr
 
-# Deploy all manifests
-kubectl apply -f k8s/ -n ccr
+# Deploy the namespace and all manifests
+kubectl apply -f k8s-minikube/
 ```
 
 ### 4. Verify
@@ -94,9 +91,8 @@ docker build -t ccr-poller:latest ./apps/poller
 docker build -t ccr-worker:latest ./apps/worker
 
 # Deploy
-kubectl create namespace ccr
 kubectl create secret generic ccr-secrets --from-env-file=.env -n ccr
-kubectl apply -f k8s/ -n ccr
+kubectl apply -f k8s-minikube/
 ```
 
 ---
@@ -141,10 +137,11 @@ kubectl rollout restart deployment/worker -n ccr
 
 ## Manifest Files
 
-All Kubernetes manifests are in the `k8s/` directory:
+All Kubernetes manifests are in the `k8s-minikube/` directory:
 
 | File | What it creates |
 |------|----------------|
-| `redis.yaml` | Redis Deployment + Service |
-| `poller.yaml` | Poller Deployment (1 replica only) |
-| `worker.yaml` | Worker Deployment (2 replicas, scalable) |
+| `namespace.yaml` | The `ccr` Namespace resource |
+| `redis.yaml` | Redis Deployment + Service (in `ccr` namespace) |
+| `poller.yaml` | Poller Deployment (1 replica only, in `ccr` namespace) |
+| `worker.yaml` | Worker Deployment (2 replicas, scalable, in `ccr` namespace) |

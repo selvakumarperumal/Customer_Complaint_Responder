@@ -7,6 +7,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: poller
+  namespace: ccr
   labels:
     app: poller
 spec:
