@@ -1,0 +1,60 @@
+# syncPolicy Explanation:
+#   automated:
+#     prune: true
+#       Enables automatic syncing of git manifest changes to the cluster without manual ArgoCD sync clicks.
+#       Why it is important: If a resource (e.g., ConfigMap, NodePool) is removed from the Git repository,
+#       ArgoCD will automatically delete that resource from the cluster, preventing configuration drift.
+#       ⚠️ Risk: If a manifest file is accidentally deleted in Git (due to a typo or wrong branch merge),
+#       the production resource will be silently deleted. As a safety net, you can add PrunePropagationPolicy
+#       to syncOptions or set prune: false for critical applications to perform manual pruning.
+#     selfHeal: true
+#       Why it is critical: If someone manually edits a cluster resource directly (e.g., via kubectl edit or scaling replicas),
+#       ArgoCD will detect the drift from Git and automatically revert the cluster to the Git state.
+#       This enforces GitOps, guaranteeing Git is the single source of truth. Any manual kubectl changes are silently undone.
+#
+# syncOptions:
+#   - ServerSideApply=true
+#     Changes the method used to apply resources to the Kubernetes API server from client-side apply (default kubectl apply)
+#     to Server-Side Apply (SSA). Client-side apply can fail on large or complex manifests (like Karpenter CRDs) with a
+#     "metadata.annotations: Too long" error because it stores the entire manifest in the `kubectl.kubernetes.io/last-applied-configuration` annotation.
+#     SSA solves this by tracking field-ownership directly on the Kubernetes API server without annotation bloat and handles conflicts
+#     properly when multiple controllers manage the same resource. Karpenter CRDs (NodePool, EC2NodeClass) are large and complex,
+#     making SSA necessary.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    kubernetes.io/description: "Install the Karpenter autoscaling controller into the cluster"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: oci://public.ecr.aws/karpenter
+    chart: karpenter
+    targetRevision: {{ .Values.karpenter.version }}
+    helm:
+      parameters:
+        - name: settings.clusterName
+          value: {{ .Values.clusterName }}
+        - name: serviceAccount.name
+          value: {{ .Values.karpenter.serviceaccountname }}
+        - name: controller.resources.requests.cpu
+          value: "200m"
+        - name: controller.resources.requests.memory
+          value: "256Mi"
+        - name: controller.resources.limits.memory
+          value: "512Mi"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

@@ -1,0 +1,135 @@
+# =============================================================================
+# Customer Complaint Responder — Helm Values
+# =============================================================================
+# Three components: Redis (broker), Poller (IMAP scanner), Worker (AI agent).
+# Defaults target Minikube local development.  Override for production/GKE.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Redis — message broker (Streams) + dedupe store
+# ---------------------------------------------------------------------------
+redis:
+  image:
+    repository: redis
+    tag: "7-alpine"
+  replicas: 1
+  command: ["redis-server", "--appendonly", "yes"]
+  port: 6379
+  persistence:
+    # false = emptyDir (fine for dev).  Set true + storageClass for production.
+    enabled: false
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  readinessProbe:
+    exec:
+      command: ["redis-cli", "ping"]
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  livenessProbe:
+    exec:
+      command: ["redis-cli", "ping"]
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+# ---------------------------------------------------------------------------
+# Poller — ONE replica only.
+# Polls IMAP inbox, marks emails SEEN, publishes to Redis Stream.
+# NEVER scale above 1 — IMAP has no built-in locking.
+# ---------------------------------------------------------------------------
+poller:
+  image:
+    repository: ccr-poller
+    tag: latest
+    pullPolicy: Never          # Minikube: use local image (override to IfNotPresent for registry)
+  replicas: 1                  # MUST stay 1 — IMAP has no built-in locking
+  strategy:
+    type: Recreate             # Kill old pod before starting new — prevents duplicate polling
+  # Name of the pre-created Secret containing env vars (.env file contents)
+  secretRef: ccr-secrets
+  ssmSecretRef: ccr-ssm-params
+  env:
+    # Fallback fully qualified service URL inside the cluster:
+    #   - scheme: redis://
+    #   - service name: redis
+    #   - namespace: complaint-responder
+    #   - cluster suffix: .svc.cluster.local
+    #   - port: :6379
+    #   - database: /0
+    REDIS_URL: "redis://redis.complaint-responder.svc.cluster.local:6379/0"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Worker — safe to scale.
+# Reads from Redis Stream, runs LangGraph AI agent, sends SMTP reply.
+# Stream consumer group handles deduplication automatically.
+# ---------------------------------------------------------------------------
+worker:
+  image:
+    repository: ccr-worker
+    tag: latest
+    pullPolicy: Never          # Minikube: use local image (override to IfNotPresent for registry)
+  replicas: 2                  # Scale freely — stream consumer group handles deduplication
+  # Name of the pre-created Secret containing env vars (.env file contents)
+  secretRef: ccr-secrets
+  ssmSecretRef: ccr-ssm-params
+  env:
+    # Fallback fully qualified service URL inside the cluster:
+    #   - scheme: redis://
+    #   - service name: redis
+    #   - namespace: complaint-responder
+    #   - cluster suffix: .svc.cluster.local
+    #   - port: :6379
+    #   - database: /0
+    REDIS_URL: "redis://redis.complaint-responder.svc.cluster.local:6379/0"
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Service Account
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+    # Example EKS annotation to assign an IAM Role to the ServiceAccount (IRSA):
+    # eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/ccr-app-role"
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# ---------------------------------------------------------------------------
+# Pod-level overrides (applied to ALL components)
+# ---------------------------------------------------------------------------
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ---------------------------------------------------------------------------
+# AWS Integration for ExternalSecrets (EKS environment)
+# ---------------------------------------------------------------------------
+aws:
+  enabled: true
+  region: "ap-south-1"
+  secretsName: "complaint-responder-secrets"
+  ssmPathPrefix: "/complaint-responder"

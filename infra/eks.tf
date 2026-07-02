@@ -13,11 +13,12 @@ module "eks" {
 
   enable_cluster_creator_admin_permissions = true
 
+  # Cost optimization: t3.medium ($0.0416/hr) vs m5.large ($0.096/hr)
+  # System node runs ArgoCD, CoreDNS, Karpenter — 2 vCPU / 4 GiB is plenty
+
   eks_managed_node_groups = {
     system = {
-      # Cost optimization: t3.medium ($0.0416/hr) vs m5.large ($0.096/hr)
-      # System node runs ArgoCD, CoreDNS, Karpenter — 2 vCPU / 4 GiB is plenty
-      instance_types = ["t3.medium"]
+      instance_types = ["t3.small"]
       min_size       = 1
       max_size       = 2
       desired_size   = 1

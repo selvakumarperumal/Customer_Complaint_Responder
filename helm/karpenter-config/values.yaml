@@ -1,0 +1,60 @@
+clustername: "complaint-responder-cluster"
+environment: "dev"
+
+ec2nodeclass:
+  amifamily: "Bottlerocket"
+  bottlerocketversion: "v1.62.1"
+  role: "karpenter-node-role"
+  blockdevices:
+    control:
+      devicename: "/dev/xvda"
+      volumesize: "3Gi"
+      volumetype: "gp3"
+      encrypted: true
+    containers:
+      devicename: "/dev/xvdb"
+      volumesize: "5Gi"
+      volumetype: "gp3"
+      encrypted: true
+
+nodepool:
+  architectures:
+    - "amd64"
+    - "arm64"
+  capacitytypes:
+    - "spot"
+    - "on-demand"
+  instancecategories:
+    - "c"
+  mininstancegeneration: "3"
+  limits:
+    cpu: "4"
+    memory: "8Gi"
+  zones:
+    - "ap-south-1a"
+    - "ap-south-1b"
+
+  # Disruption budget meaning (English):
+  # - Budgets apply to node disruption operations: delete and replace.
+  # - Empty usually means delete only (no replacement needed).
+  # - Drifted usually means replace (create new node, then remove old node).
+  # - Underutilized can be delete-only or replace, depending on consolidation result.
+  #
+  # Example (if NodePool has 20 nodes):
+  # 1) Budget: 20% for Empty/Drifted -> up to 4 nodes at once.
+  # 2) Budget: 5 global -> up to 5 nodes at once for any reason.
+  # 3) Budget: 0 for Underutilized during a daily 10m window -> pause that reason in that window.
+  # Effective rule: Karpenter uses the most restrictive active limit (minimum value).
+  # - Drifted at normal time: min(4, 5) = 4 in-flight disruptions.
+  # - Underutilized during blackout window: min(5, 0) = 0 disruptions.
+  disruption:
+    consolidationPolicy: "WhenEmptyOrUnderutilized"
+    budgets:
+      - nodes: "20%"
+        reasons: ["Empty", "Drifted"]
+      - nodes: "5"
+      - nodes: "0"
+        schedule: "@daily"
+        duration: 10m
+        reasons: ["Underutilized"]
+    

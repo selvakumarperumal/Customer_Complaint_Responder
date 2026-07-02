@@ -1,0 +1,12 @@
+apiVersion: v2
+name: Customer-Complaint-Responder
+description: >-
+  Helm chart for the Customer Complaint Responder — an AI-powered email
+  support system.  Deploys three components: Redis (message broker),
+  Poller (IMAP inbox scanner), and Worker (LangGraph AI agent + SMTP reply).
+
+type: application
+
+version: 0.1.0
+
+appVersion: "1.0.0"

@@ -1,0 +1,31 @@
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: {{ include "karpenter-config.fullname" . }}
+  labels:
+    {{- include "karpenter-config.labels" . | nindent 4 }}
+spec:
+  amiFamily: {{ .Values.ec2nodeclass.amifamily | quote }}
+  amiSelectorTerms:
+    - alias: bottlerocket@{{ .Values.ec2nodeclass.bottlerocketversion }}
+  role: {{ .Values.ec2nodeclass.role | quote }}
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ .Values.clustername | quote }}
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ .Values.clustername | quote }}
+  blockDeviceMappings:
+    - deviceName: {{ .Values.ec2nodeclass.blockdevices.control.devicename | quote }}
+      ebs:
+        volumeSize: {{ .Values.ec2nodeclass.blockdevices.control.volumesize | quote }}
+        volumeType: {{ .Values.ec2nodeclass.blockdevices.control.volumetype | quote }}
+        encrypted: {{ .Values.ec2nodeclass.blockdevices.control.encrypted }}
+    - deviceName: {{ .Values.ec2nodeclass.blockdevices.containers.devicename | quote }}
+      ebs:
+        volumeSize: {{ .Values.ec2nodeclass.blockdevices.containers.volumesize | quote }}
+        volumeType: {{ .Values.ec2nodeclass.blockdevices.containers.volumetype | quote }}
+        encrypted: {{ .Values.ec2nodeclass.blockdevices.containers.encrypted }}
+  tags:
+    karpenter.sh/discovery: {{ .Values.clustername | quote }}
+    environment: {{ .Values.environment | quote }}

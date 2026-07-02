@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Poller Deployment — ONE replica only.
+# Polls IMAP inbox, marks emails SEEN, publishes to Redis Stream.
+# NEVER scale above 1 — IMAP has no built-in locking.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: poller
+  labels:
+    {{- include "Customer-Complaint-Responder.poller.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.poller.replicas }}  # MUST stay 1 — IMAP has no built-in locking
+  {{- with .Values.poller.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "Customer-Complaint-Responder.poller.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "Customer-Complaint-Responder.poller.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "Customer-Complaint-Responder.serviceAccountName" . }}
+      containers:
+        - name: poller
+          image: "{{ .Values.poller.image.repository }}:{{ .Values.poller.image.tag }}"
+          imagePullPolicy: {{ .Values.poller.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.poller.secretRef }}
+            {{- if .Values.poller.ssmSecretRef }}
+            - secretRef:
+                name: {{ .Values.poller.ssmSecretRef }}
+            {{- end }}
+          env:
+            - name: REDIS_URL
+              value: {{ include "Customer-Complaint-Responder.redisUrl" . | quote }}
+          {{- with .Values.poller.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

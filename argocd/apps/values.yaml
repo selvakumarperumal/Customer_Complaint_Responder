@@ -1,0 +1,5 @@
+# Default values for ArgoCD apps parent chart (App-of-Apps).
+# This is a YAML-formatted file.
+
+repoURL: "https://github.com/selvakumarperumal/Customer_Complaint_Responder.git"
+targetRevision: "main"

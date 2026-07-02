@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "Customer-Complaint-Responder.fullname" . }}-test-redis"
+  labels:
+    {{- include "Customer-Complaint-Responder.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: redis-ping
+      image: redis:7-alpine
+      command: ["redis-cli", "-h", "redis.{{ .Release.Namespace }}.svc.cluster.local", "-p", "{{ .Values.redis.port }}", "ping"]
+  restartPolicy: Never

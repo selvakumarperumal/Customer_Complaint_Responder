@@ -1,0 +1,63 @@
+# ---------------------------------------------------------------------------
+# Worker Deployment — safe to scale.
+# Reads from Redis Stream, runs LangGraph AI agent, sends SMTP reply.
+# Stream consumer group handles deduplication automatically.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    {{- include "Customer-Complaint-Responder.worker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}  # Scale freely — stream consumer group handles deduplication
+  selector:
+    matchLabels:
+      {{- include "Customer-Complaint-Responder.worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "Customer-Complaint-Responder.worker.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "Customer-Complaint-Responder.serviceAccountName" . }}
+      containers:
+        - name: worker
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.worker.secretRef }}
+            {{- if .Values.worker.ssmSecretRef }}
+            - secretRef:
+                name: {{ .Values.worker.ssmSecretRef }}
+            {{- end }}
+          env:
+            - name: REDIS_URL
+              value: {{ include "Customer-Complaint-Responder.redisUrl" . | quote }}
+          {{- with .Values.worker.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
