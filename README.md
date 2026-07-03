@@ -19,6 +19,7 @@ An AI-powered customer complaint handling system that monitors a support inbox, 
 - [Quick Start](#quick-start)
 - [Scaling](#scaling)
 - [Deployment to AWS EKS (GitOps)](#deployment-to-aws-eks-gitops)
+- [Production Infrastructure Lifecycle (Create, Deploy, Destroy)](#production-infrastructure-lifecycle-create-deploy-destroy)
 - [Logs](#logs)
 - [Tech Stack](#tech-stack)
 
@@ -436,6 +437,107 @@ The `karpenter-config` chart configures Karpenter v1.13.0 to handle autoscaling 
 * **Instances**: Karpenter scales on c-class instances of generation `3` and newer (e.g. `c5`, `c6i`), supporting both `amd64` and `arm64` CPU architectures.
 * **OS**: Nodes run EKS-optimized **Bottlerocket OS** with optimized EBS configurations (`3Gi` xvda root control volume, `5Gi` xvdb container storage).
 * **Consolidation**: Configured with disruption budgets to prune underutilized nodes and drift configurations safely during low traffic.
+
+---
+
+## Production Infrastructure Lifecycle (Create, Deploy, Destroy)
+
+Below is the step-by-step lifecycle workflow for managing the production environment on AWS EKS.
+
+### 1. Create Infrastructure (Terraform)
+
+#### A. Initialize the State Backend Bucket
+Navigating to the `statebucket` module to create the S3 bucket and DynamoDB lock table for storing Terraform state:
+```bash
+cd statebucket/
+terraform init
+terraform apply
+cd ..
+```
+*Note: This generates `infra/backend.hcl` automatically, which configures the remote backend for the main infrastructure module.*
+
+#### B. Deploy the Infrastructure
+1. Create a `terraform.tfvars` file under `infra/` with your credentials:
+   ```hcl
+   aws_region            = "ap-south-1"
+   project_name          = "complaint-responder"
+   google_api_key        = "YOUR_GEMINI_API_KEY"
+   mistral_api_key       = "YOUR_MISTRAL_API_KEY"
+   private_mail_email_id = "support@yourdomain.com"
+   private_mail_password = "YOUR_MAIL_PASSWORD"
+   ```
+2. Apply the Terraform configurations:
+   ```bash
+   cd infra/
+   terraform init -backend-config=backend.hcl
+   terraform apply
+   cd ..
+   ```
+   This provisions the VPC, EKS cluster, ECR registries, AWS Secrets Manager credentials, SSM parameter values, and bootstraps ArgoCD in the cluster.
+
+---
+
+### 2. Build and Deploy Application (Docker + ArgoCD)
+
+#### A. Build and Push Container Images to ECR
+1. Log in to your AWS ECR Registry:
+   ```bash
+   aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com
+   ```
+2. Build and tag the Poller and Worker images:
+   ```bash
+   # Build & push Poller
+   docker build -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/poller:latest apps/poller/
+   docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/poller:latest
+
+   # Build & push Worker
+   docker build -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/worker:latest apps/worker/
+   docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/worker:latest
+   ```
+
+#### B. Bootstrap GitOps Deployment
+Apply the root parent ArgoCD Application to trigger the App-of-Apps syncing:
+```bash
+kubectl apply -f argocd/app-of-apps.yaml
+```
+This triggers ArgoCD to pull configurations from the `main` branch, setup namespaces, configure Karpenter, sync EKS ExternalSecrets, and deploy the application pods.
+
+---
+
+### 3. Destroy Infrastructure Properly (Tear Down)
+
+> [!CAUTION]
+> **Orphaned Karpenter Node Leak Warning**:
+> Running `terraform destroy` directly on your infrastructure **will get stuck or fail**. Because Karpenter dynamically provisions worker EC2 instances *outside* of Terraform, destroying the EKS cluster first will leave these nodes orphaned. The active ENIs (elastic network interfaces) and Security Groups attached to these orphaned nodes will block Terraform from deleting the VPC, resulting in a deadlock.
+
+Follow this strict destruction sequence:
+
+#### Step 1: Delete all Karpenter-managed resources first
+Delete the root GitOps application to clean up the cluster workloads. This forces Karpenter to drain and terminate all EC2 worker instances it launched:
+```bash
+kubectl delete -f argocd/app-of-apps.yaml
+```
+
+Wait until all Karpenter-managed worker nodes are fully terminated. You can verify this by checking that only your managed system node group remains:
+```bash
+kubectl get nodes
+```
+
+#### Step 2: Destroy Infrastructure Configurations
+Once Karpenter-managed EC2 nodes have been completely terminated, destroy the core cluster resources:
+```bash
+cd infra/
+terraform destroy
+cd ..
+```
+
+#### Step 3: Destroy State Bucket
+Finally, clean up the remote state bucket:
+```bash
+cd statebucket/
+terraform destroy
+cd ..
+```
 
 ---
 
