@@ -13,6 +13,16 @@ spec:
     repoURL: {{ .Values.repoURL | quote }}
     targetRevision: {{ .Values.targetRevision | quote }}
     path: helm/Customer-Complaint-Responder
+    helm:
+      parameters:
+        - name: poller.image.repository
+          value: "{{ .Values.ecrRegistry }}/complaint-responder-ecr/poller"
+        - name: poller.image.pullPolicy
+          value: "IfNotPresent"
+        - name: worker.image.repository
+          value: "{{ .Values.ecrRegistry }}/complaint-responder-ecr/worker"
+        - name: worker.image.pullPolicy
+          value: "IfNotPresent"
   destination:
     server: https://kubernetes.default.svc
     namespace: complaint-responder

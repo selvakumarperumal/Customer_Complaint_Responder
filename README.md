@@ -486,13 +486,13 @@ cd ..
    ```
 2. Build and tag the Poller and Worker images:
    ```bash
-   # Build & push Poller
-   docker build -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/poller:latest apps/poller/
-   docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/poller:latest
+    # Build & push Poller
+    docker build -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/poller:latest apps/poller/
+    docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/poller:latest
 
-   # Build & push Worker
-   docker build -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/worker:latest apps/worker/
-   docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/worker:latest
+    # Build & push Worker
+    docker build -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/worker:latest apps/worker/
+    docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/worker:latest
    ```
 
 #### B. Bootstrap GitOps Deployment
