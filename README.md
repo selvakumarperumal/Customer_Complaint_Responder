@@ -18,6 +18,7 @@ An AI-powered customer complaint handling system that monitors a support inbox, 
 - [Environment Variables](#environment-variables)
 - [Quick Start](#quick-start)
 - [Scaling](#scaling)
+- [Deployment to AWS EKS (GitOps)](#deployment-to-aws-eks-gitops)
 - [Logs](#logs)
 - [Tech Stack](#tech-stack)
 
@@ -360,7 +361,81 @@ docker compose up -d --scale worker=4
 docker compose exec redis redis-cli XINFO CONSUMERS email:inbound complaint-workers
 ```
 
-**For Kubernetes (future):** Use a KEDA `ScaledObject` targeting the `email:inbound` stream length to automatically scale the Worker deployment based on queue depth. Keep the Poller as a standard `Deployment` with `replicas: 1`.
+**For Kubernetes autoscaling:** Use a KEDA `ScaledObject` targeting the `email:inbound` stream length to automatically scale the Worker deployment based on queue depth. Keep the Poller as a standard `Deployment` with `replicas: 1`.
+
+---
+
+## Deployment to AWS EKS (GitOps)
+
+The system is configured for production deployment on **AWS EKS** using **ArgoCD GitOps** (App-of-Apps pattern) and **AWS IAM Pod Identity / IRSA** to secure secret syncing.
+
+### EKS Architecture
+
+```
+                     ┌──────────────────────────────────────────────┐
+                     │                 AWS Cloud                    │
+                     │                                              │
+                     │  ┌──────────────────┐  ┌──────────────────┐  │
+                     │  │ Secrets Manager  │  │ SSM Param Store  │  │
+                     │  └────────┬─────────┘  └────────┬─────────┘  │
+                     │           │                     │            │
+                     └───────────┼─────────────────────┼────────────┘
+                                 │ Sync                │ Sync
+                                 ▼                     ▼
+┌────────────────────────────────┼─────────────────────┼────────────┐
+│ Kubernetes (EKS Cluster)       │                     │            │
+│                                │                     │            │
+│   Namespace: external-secrets  │                     │            │
+│   ┌────────────────────────────▼─────────────────────▼────────┐   │
+│   │               external-secrets operator                   │   │
+│   └────────────────────────────┬─────────────────────┬────────┘   │
+│                                │ Writes              │ Writes     │
+│                                ▼                     ▼            │
+│   Namespace: complaint-responder                                  │
+│   ┌────────────────────────────┐                     │            │
+│   │ Secret: ccr-secrets        │                     │            │
+│   └────────────┬───────────────┘                     │            │
+│                │ envFrom                             ▼            │
+│                │           ┌─────────────────────────┐            │
+│                ├──────────▶│ Secret: ccr-ssm-params  │            │
+│                │           └────────────┬────────────┘            │
+│                │                        │ envFrom                 │
+│                ▼                        ▼                         │
+│       ┌──────────────┐         ┌──────────────┐                   │
+│       │    poller    │         │    worker    │                   │
+│       │  (1 replica) │         │ (2+ replicas)│                   │
+│       └──────────────┘         └──────────────┘                   │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### 1. Root Bootstrapping (App-of-Apps)
+
+Deployment is managed via a parent Helm chart `argocd/apps` which manages three child Applications in the cluster.
+
+Apply the root application directly using `kubectl`:
+```bash
+kubectl apply -f argocd/app-of-apps.yaml
+```
+
+ArgoCD coordinates the resource rollouts in sequential **Sync Waves**:
+1. **Wave 1 (`platform-baseline`)**: Deploys controllers (`external-secrets` and `karpenter`).
+2. **Wave 2 (`karpenter-config`)**: Provisions Karpenter configuration settings (`NodePool` and `EC2NodeClass`).
+3. **Wave 3 (`customer-complaint-responder`)**: Deploys the main application (`redis`, `poller`, `worker`).
+
+### 2. AWS Secrets Manager & SSM Parameter Store Syncing
+
+The application deployment templates are fully integrated with AWS Secrets Manager and SSM Parameter Store using the **ExternalSecrets** operator.
+* **Credentials**: Synced from AWS Secrets Manager secret `${project_name}-secrets` (Google Gemini API key, Mistral API key, IMAP credentials) into a Kubernetes Secret named `ccr-secrets`.
+* **Configurations**: Synced from SSM parameters (port numbers, Redis stream names, consumer group settings) into a Kubernetes Secret named `ccr-ssm-params`.
+* **Security**: Syncing is authorized using EKS ServiceAccounts bound to AWS IAM Roles (via IRSA or EKS Pod Identity) matching policies defined in Terraform (`infra/`).
+
+### 3. Dynamic Node Scaling (Karpenter)
+
+The `karpenter-config` chart configures Karpenter v1.13.0 to handle autoscaling for your worker node pool:
+* **Instances**: Karpenter scales on c-class instances of generation `3` and newer (e.g. `c5`, `c6i`), supporting both `amd64` and `arm64` CPU architectures.
+* **OS**: Nodes run EKS-optimized **Bottlerocket OS** with optimized EBS configurations (`3Gi` xvda root control volume, `5Gi` xvdb container storage).
+* **Consolidation**: Configured with disruption budgets to prune underutilized nodes and drift configurations safely during low traffic.
 
 ---
 
