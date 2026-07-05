@@ -475,6 +475,79 @@ cd ..
    ```
    This provisions the VPC, EKS cluster, ECR registries, AWS Secrets Manager credentials, SSM parameter values, and bootstraps ArgoCD in the cluster.
 
+#### C. Verify the Provisioned Infrastructure
+
+To ensure that all resources are correctly provisioned and ready, perform the following verification checks:
+
+##### 1. Connect to the EKS Cluster
+Configure `kubectl` to connect to your new EKS cluster:
+```bash
+aws eks update-kubeconfig --region ap-south-1 --name complaint-responder-cluster
+```
+*(Adjust the `--region` and `--name` flags if you used different values in `terraform.tfvars`.)*
+
+##### 2. Verify Cluster Status and Nodes
+Verify that the cluster is active and that the managed system node group has successfully launched:
+```bash
+# Check EKS cluster status (should output "ACTIVE")
+aws eks describe-cluster --name complaint-responder-cluster --query "cluster.status" --output text
+
+# List cluster nodes (should show the system node in 'Ready' status)
+kubectl get nodes -o wide
+```
+
+##### 3. Verify AWS Secrets Manager & SSM Parameter Store
+Ensure the application secrets and configuration parameters are successfully stored in AWS, and verify their retrieved values/keys:
+
+```bash
+# Retrieve metadata of the secret
+aws secretsmanager describe-secret --secret-id complaint-responder-secrets
+
+# Retrieve the JSON secret value (verify the keys like google_api_key exist)
+aws secretsmanager get-secret-value --secret-id complaint-responder-secrets --query SecretString --output text
+
+# List all SSM parameters with their decrypted values in a table
+aws ssm get-parameters-by-path --path "/complaint-responder/" --with-decryption --query "Parameters[*].[Name,Value]" --output table
+```
+
+##### 4. Verify Synced Kubernetes Secrets (Post-Deployment)
+Once the application charts are applied via ArgoCD, verify that the **ExternalSecrets** operator has successfully mapped the AWS secrets and SSM parameters to native Kubernetes Secrets in the target namespace:
+```bash
+# Check status of ExternalSecrets (should show SecretSynced)
+kubectl get externalsecrets -n complaint-responder
+
+# Verify the synced Kubernetes secrets are present
+kubectl get secrets ccr-secrets ccr-ssm-params -n complaint-responder
+
+# Verify the keys populated in the ccr-secrets Secret
+kubectl get secret ccr-secrets -n complaint-responder -o jsonpath="{.data}" | jq 'keys' 2>/dev/null || kubectl get secret ccr-secrets -n complaint-responder -o jsonpath="{.data}"
+```
+
+##### 5. Verify ECR Repositories
+Check that the Amazon ECR repositories are ready to receive container images:
+```bash
+aws ecr describe-repositories --query "repositories[].repositoryName"
+```
+*Expected repositories:*
+- `complaint-responder-ecr/poller`
+- `complaint-responder-ecr/worker`
+
+##### 6. Verify ArgoCD Deployment
+Confirm that the ArgoCD components have bootstrapped successfully in the cluster:
+```bash
+# Check the status of ArgoCD pods (should show Running/Completed status)
+kubectl get pods -n argocd
+
+# Retrieve the initial administrator password for the ArgoCD web console
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo
+```
+You can access the ArgoCD dashboard by port-forwarding the service:
+```bash
+# Forward port 8080 to the ArgoCD API Server
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+```
+*Open `https://localhost:8080` in your web browser and sign in using username `admin` and the retrieved password.*
+
 ---
 
 ### 2. Build and Deploy Application (Docker + ArgoCD)
