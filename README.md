@@ -583,7 +583,7 @@ This triggers ArgoCD to pull configurations from the `main` branch, setup namesp
 > **Orphaned Karpenter Node Leak Warning**:
 > Running `terraform destroy` directly on your infrastructure **will get stuck or fail**. Because Karpenter dynamically provisions worker EC2 instances *outside* of Terraform, destroying the EKS cluster first will leave these nodes orphaned. The active ENIs (elastic network interfaces) and Security Groups attached to these orphaned nodes will block Terraform from deleting the VPC, resulting in a deadlock.
 
-Follow this strict destruction sequence:
+Follow this strict, fail-safe destruction sequence:
 
 #### Step 1: Delete all Karpenter-managed resources first
 Delete the root GitOps application to clean up the cluster workloads. This forces Karpenter to drain and terminate all EC2 worker instances it launched:
@@ -591,24 +591,61 @@ Delete the root GitOps application to clean up the cluster workloads. This force
 kubectl delete -f argocd/app-of-apps.yaml
 ```
 
+Verify that all ArgoCD applications have been fully removed:
+```bash
+kubectl get applications -n argocd
+# Expected: "No resources found in argocd namespace."
+```
+
 Wait until all Karpenter-managed worker nodes are fully terminated. You can verify this by checking that only your managed system node group remains:
 ```bash
 kubectl get nodes
 ```
 
-#### Step 2: Destroy Infrastructure Configurations
-Once Karpenter-managed EC2 nodes have been completely terminated, destroy the core cluster resources:
+#### Step 2: Clean and Force-Delete ECR Repositories
+Terraform will fail to delete ECR registries if they still contain container images (tags or untagged layers). Force-delete them via the AWS CLI before destroying the Terraform configuration:
+```bash
+aws ecr delete-repository --repository-name complaint-responder-ecr/poller --force --region ap-south-1
+aws ecr delete-repository --repository-name complaint-responder-ecr/worker --force --region ap-south-1
+```
+*(If a repository has already been deleted or is missing, you can safely ignore any `RepositoryNotFoundException` errors).*
+
+#### Step 3: Destroy Core EKS and VPC Infrastructure (Terraform)
+Make sure to source your environment variables from `.envrc` so Terraform does not prompt you for the API keys or mail credentials during destruction:
 ```bash
 cd infra/
-terraform destroy
+source .envrc
+terraform destroy -auto-approve
 cd ..
 ```
+*(If a state lock is left over from an interrupted run, retrieve the Lock ID from the error output and run: `source .envrc && echo "yes" | terraform force-unlock <LOCK_ID>`)*
 
-#### Step 3: Destroy State Bucket
-Finally, clean up the remote state bucket:
+#### Step 4: Empty S3 Remote State Bucket Versions
+Since the state bucket has versioning enabled, AWS prevents bucket deletion while it contains old versions and delete markers. Empty all versions and delete markers from the bucket:
+```bash
+# Replace <YOUR_AWS_ACCOUNT_ID> with your actual AWS account number
+# 1. Delete all object versions
+aws s3api delete-objects \
+  --bucket ccr-tfstate-bucket-001-<YOUR_AWS_ACCOUNT_ID> \
+  --delete "$(aws s3api list-object-versions \
+              --bucket ccr-tfstate-bucket-001-<YOUR_AWS_ACCOUNT_ID> \
+              --query='{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
+              --output json)"
+
+# 2. Delete all delete markers
+aws s3api delete-objects \
+  --bucket ccr-tfstate-bucket-001-<YOUR_AWS_ACCOUNT_ID> \
+  --delete "$(aws s3api list-object-versions \
+              --bucket ccr-tfstate-bucket-001-<YOUR_AWS_ACCOUNT_ID> \
+              --query='{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
+              --output json)"
+```
+
+#### Step 5: Destroy the State Bucket Configuration (Terraform)
+Once the bucket is completely empty, destroy the S3 bucket and local state bucket configurations:
 ```bash
 cd statebucket/
-terraform destroy
+terraform destroy -auto-approve
 cd ..
 ```
 
