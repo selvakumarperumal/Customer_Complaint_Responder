@@ -3,4 +3,4 @@
 
 repoURL: "https://github.com/selvakumarperumal/Customer_Complaint_Responder.git"
 targetRevision: "main"
-ecrRegistry: "<YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com"
+ecrRegistry: "961445532924.dkr.ecr.ap-south-1.amazonaws.com"
