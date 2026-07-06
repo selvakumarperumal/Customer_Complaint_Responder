@@ -69,7 +69,7 @@ Redis labels
 */}}
 {{- define "Customer-Complaint-Responder.redis.labels" -}}
 {{ include "Customer-Complaint-Responder.labels" . }}
-app: redis
+{{ include "Customer-Complaint-Responder.redis.selectorLabels" . }}
 app.kubernetes.io/component: redis
 {{- end }}
 
@@ -86,7 +86,7 @@ Poller labels
 */}}
 {{- define "Customer-Complaint-Responder.poller.labels" -}}
 {{ include "Customer-Complaint-Responder.labels" . }}
-app: poller
+{{ include "Customer-Complaint-Responder.poller.selectorLabels" . }}
 app.kubernetes.io/component: poller
 {{- end }}
 
@@ -103,7 +103,7 @@ Worker labels
 */}}
 {{- define "Customer-Complaint-Responder.worker.labels" -}}
 {{ include "Customer-Complaint-Responder.labels" . }}
-app: worker
+{{ include "Customer-Complaint-Responder.worker.selectorLabels" . }}
 app.kubernetes.io/component: worker
 {{- end }}
 
