@@ -37,5 +37,6 @@ spec:
     memory: {{ .Values.nodepool.limits.memory | quote }}
   disruption:
     consolidationPolicy: {{ .Values.nodepool.disruption.consolidationPolicy | quote }}
+    consolidateAfter: {{ .Values.nodepool.disruption.consolidateAfter | quote }}
     budgets:
       {{- toYaml .Values.nodepool.disruption.budgets | nindent 6 }}

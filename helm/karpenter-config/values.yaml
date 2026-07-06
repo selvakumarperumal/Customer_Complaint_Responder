@@ -48,6 +48,7 @@ nodepool:
   # - Underutilized during blackout window: min(5, 0) = 0 disruptions.
   disruption:
     consolidationPolicy: "WhenEmptyOrUnderutilized"
+    consolidateAfter: "1m"
     budgets:
       - nodes: "20%"
         reasons: ["Empty", "Drifted"]
