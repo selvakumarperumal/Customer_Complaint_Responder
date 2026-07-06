@@ -48,6 +48,8 @@ nodepool:
   # - Underutilized during blackout window: min(5, 0) = 0 disruptions.
   disruption:
     consolidationPolicy: "WhenEmptyOrUnderutilized"
+    # consolidateAfter is REQUIRED under Karpenter v1 (karpenter.sh/v1) disruption settings.
+    # It defines the duration Karpenter waits before terminating underutilized nodes.
     consolidateAfter: "1m"
     budgets:
       - nodes: "20%"
