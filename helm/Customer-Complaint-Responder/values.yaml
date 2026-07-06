@@ -121,6 +121,10 @@ podAnnotations: {}
 podLabels: {}
 podSecurityContext: {}
 securityContext: {}
+# Constraint to amd64 is REQUIRED because custom docker images (poller, worker)
+# are built for amd64 only. Without this, Karpenter may schedule pods on cheaper
+# arm64 nodes, resulting in "exec /usr/bin/uv: exec format error".
+# Remove this constraint if you build multi-arch images (e.g. using buildx).
 nodeSelector:
   kubernetes.io/arch: amd64
 tolerations: []
