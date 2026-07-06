@@ -121,7 +121,8 @@ podAnnotations: {}
 podLabels: {}
 podSecurityContext: {}
 securityContext: {}
-nodeSelector: {}
+nodeSelector:
+  kubernetes.io/arch: amd64
 tolerations: []
 affinity: {}
 
