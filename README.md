@@ -554,6 +554,10 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 ### 2. Build and Deploy Application (Docker + ArgoCD)
 
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 -t <your-ecr-repo-url>:<tag> --push .
+```
+
 #### A. Build and Push Container Images to ECR
 1. Log in to your AWS ECR Registry:
    ```bash
