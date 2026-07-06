@@ -34,6 +34,8 @@ metadata:
 spec:
   project: default
   source:
+    # ⚠️ No oci:// prefix — ArgoCD handles OCI natively. Adding oci:// causes:
+    #    "cannot get digest for revision: public.ecr.aws/karpenter:<version>: not found"
     repoURL: public.ecr.aws/karpenter
     chart: karpenter
     targetRevision: {{ .Values.karpenter.version }}
