@@ -2,7 +2,7 @@
 # Customer Complaint Responder — Helm Values
 # =============================================================================
 # Three components: Redis (broker), Poller (IMAP scanner), Worker (AI agent).
-# Defaults target Minikube local development.  Override for production/GKE.
+# Defaults target Minikube local development.  Override for production/EKS.
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -47,10 +47,10 @@ poller:
   image:
     repository: ccr-poller
     tag: latest
-    pullPolicy: Never          # Minikube: use local image (override to IfNotPresent for registry)
-  replicas: 1                  # MUST stay 1 — IMAP has no built-in locking
+    pullPolicy: Never # Minikube: use local image (override to IfNotPresent for registry)
+  replicas: 1 # MUST stay 1 — IMAP has no built-in locking
   strategy:
-    type: Recreate             # Kill old pod before starting new — prevents duplicate polling
+    type: Recreate # Kill old pod before starting new — prevents duplicate polling
   # Name of the pre-created Secret containing env vars (.env file contents)
   secretRef: ccr-secrets
   ssmSecretRef: ccr-ssm-params
@@ -66,10 +66,10 @@ poller:
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
       cpu: 250m
-      memory: 256Mi
+      memory: 384Mi
 
 # ---------------------------------------------------------------------------
 # Worker — safe to scale.
@@ -80,8 +80,8 @@ worker:
   image:
     repository: ccr-worker
     tag: latest
-    pullPolicy: Never          # Minikube: use local image (override to IfNotPresent for registry)
-  replicas: 2                  # Scale freely — stream consumer group handles deduplication
+    pullPolicy: Never # Minikube: use local image (override to IfNotPresent for registry)
+  replicas: 2 # Scale freely — stream consumer group handles deduplication
   # Name of the pre-created Secret containing env vars (.env file contents)
   secretRef: ccr-secrets
   ssmSecretRef: ccr-ssm-params
@@ -97,10 +97,10 @@ worker:
   resources:
     requests:
       cpu: 200m
-      memory: 256Mi
+      memory: 384Mi
     limits:
       cpu: 500m
-      memory: 512Mi
+      memory: 640Mi
 
 # ---------------------------------------------------------------------------
 # Service Account

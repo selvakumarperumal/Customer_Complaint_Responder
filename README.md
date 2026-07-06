@@ -610,6 +610,18 @@ aws ecr delete-repository --repository-name complaint-responder-ecr/worker --for
 ```
 *(If a repository has already been deleted or is missing, you can safely ignore any `RepositoryNotFoundException` errors).*
 
+##### FAQ: What if I already deleted the ECR repository manually?
+No issue. `terraform destroy` handles this gracefully.
+
+Why this is safe:
+- Terraform refreshes state against AWS before destroy actions.
+- If ECR returns `RepositoryNotFoundException`, Terraform treats the repository as already gone and removes it from state.
+- Terraform will not attempt a delete call for a repository that no longer exists.
+
+Practical note:
+- Run `terraform plan -destroy` first to verify what remains.
+- `terraform state rm` is optional in this case, not required.
+
 #### Step 3: Destroy Core EKS and VPC Infrastructure (Terraform)
 Make sure to source your environment variables from `.envrc` so Terraform does not prompt you for the API keys or mail credentials during destruction:
 ```bash

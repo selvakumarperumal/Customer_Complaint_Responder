@@ -22,7 +22,6 @@ nodepool:
     - "amd64"
     - "arm64"
   capacitytypes:
-    - "spot"
     - "on-demand"
   instancecategories:
     - "c"

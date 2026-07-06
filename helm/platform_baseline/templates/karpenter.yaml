@@ -49,6 +49,14 @@ spec:
           value: "256Mi"
         - name: controller.resources.limits.memory
           value: "512Mi"
+        # Pin Karpenter to system nodes — prevents circular dependency
+        # (Karpenter must NOT run on nodes it manages)
+        - name: tolerations[0].key
+          value: "CriticalAddonsOnly"
+        - name: tolerations[0].operator
+          value: "Exists"
+        - name: nodeSelector.role
+          value: "system"
   destination:
     server: https://kubernetes.default.svc
     namespace: kube-system

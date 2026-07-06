@@ -12,7 +12,6 @@ UNSEEN email.  The Redis Stream + consumer group in the worker handles scale-out
 on the processing side.
 """
 
-import json
 import logging
 import time
 

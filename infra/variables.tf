@@ -109,7 +109,7 @@ variable "redis_stream_name" {
 variable "redis_consumer_group_name" {
   description = "Redis consumer group name"
   type        = string
-  default     = "ccr-complaint-worker"
+  default     = "complaint-workers"
 }
 
 # For future reference if using a private GitHub repository for ArgoCD GitOps
