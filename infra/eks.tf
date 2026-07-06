@@ -8,6 +8,9 @@ module "eks" {
   endpoint_public_access  = true
   endpoint_private_access = true
 
+  # Disable creation of EKS control plane CloudWatch log group to save costs
+  create_cloudwatch_log_group = false
+
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 

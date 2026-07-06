@@ -4,6 +4,9 @@ module "karpenter" {
 
   cluster_name = module.eks.cluster_name
 
+  # Disable CloudWatch event rules and SQS queue for cost savings (we use on-demand instances only)
+  enable_interruption_handler = false
+
   # ── Controller side: Pod Identity for the Karpenter controller pod ──
   create_pod_identity_association = true
   namespace                       = "kube-system" # explicit, matches your ArgoCD destination
