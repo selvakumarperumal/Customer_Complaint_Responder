@@ -435,6 +435,8 @@ The application deployment templates are fully integrated with AWS Secrets Manag
 
 The `karpenter-config` chart configures Karpenter v1.13.0 to handle autoscaling for your worker node pool:
 * **Instances**: Karpenter scales on c-class instances of generation `3` and newer (e.g. `c5`, `c6i`), supporting both `amd64` and `arm64` CPU architectures.
+  > [!IMPORTANT]
+  > Because the custom application docker images (`poller`, `worker`) are built only for the `amd64` architecture, the helm values configure a `nodeSelector` (`kubernetes.io/arch: amd64`) for all pods. This prevents scheduling them on cheaper `arm64` instances which would crash with an `exec /usr/bin/uv: exec format error`. If you build multi-arch images (e.g., using `docker buildx`), you can remove this selector constraint.
 * **OS**: Nodes run EKS-optimized **Bottlerocket OS** with optimized EBS configurations (`3Gi` xvda root control volume, `5Gi` xvdb container storage).
 * **Consolidation**: Configured with disruption budgets to prune underutilized nodes and drift configurations safely during low traffic.
 
@@ -557,15 +559,28 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
    ```bash
    aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com
    ```
-2. Build and tag the Poller and Worker images:
+2. Build and tag the Poller and Worker images.
+   
+   If you want to run pods on both `amd64` and `arm64` nodes (supporting Karpenter's dual-architecture settings), build multi-arch images using Docker `buildx`:
    ```bash
-    # Build & push Poller
-    docker build -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/poller:latest apps/poller/
-    docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/poller:latest
+   # Initialize buildx driver if you haven't already
+   docker buildx create --use
+   
+   # Build & push Poller (multi-arch)
+   docker buildx build --platform linux/amd64,linux/arm64 -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/poller:latest --push apps/poller/
 
-    # Build & push Worker
-    docker build -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/worker:latest apps/worker/
-    docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/worker:latest
+   # Build & push Worker (multi-arch)
+   docker buildx build --platform linux/amd64,linux/arm64 -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/worker:latest --push apps/worker/
+   ```
+   Otherwise, standard builds will only support `amd64` hosts:
+   ```bash
+   # Build & push Poller (default architecture)
+   docker build -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/poller:latest apps/poller/
+   docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/poller:latest
+
+   # Build & push Worker (default architecture)
+   docker build -t <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/worker:latest apps/worker/
+   docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/complaint-responder-ecr/worker:latest
    ```
 
 #### B. Bootstrap GitOps Deployment
