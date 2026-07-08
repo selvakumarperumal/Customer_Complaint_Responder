@@ -223,7 +223,11 @@ kubectl get nodes
 ```
 
 ### Step 2: Empty ECR Registries
-Terraform will fail to delete ECR registries if they still contain container images (tags or untagged layers). Force-delete them via the AWS CLI:
+Terraform will fail to delete ECR registries if they still contain container images (tagged or untagged layers). You can delete all images using the provided Python script:
+```bash
+uv run --project destroy_essentials destroy_essentials/delete_ecr_repo.py
+```
+*(Alternatively, you can force-delete the repositories via the AWS CLI:)*
 ```bash
 aws ecr delete-repository --repository-name complaint-responder-ecr/poller --force --region ap-south-1
 aws ecr delete-repository --repository-name complaint-responder-ecr/worker --force --region ap-south-1
@@ -240,9 +244,12 @@ cd ..
 *(If a state lock is left over from an interrupted run, retrieve the Lock ID from the error output and run: `terraform force-unlock <LOCK_ID>`)*
 
 ### Step 4: Empty S3 Remote State Bucket Versions
-Since the state bucket has versioning enabled, AWS prevents bucket deletion while it contains old versions and delete markers. Empty all versions and delete markers from the bucket:
+Since the state bucket has versioning enabled, AWS prevents bucket deletion while it contains old versions, delete markers, or incomplete multipart uploads. Clean the bucket using the provided Python script:
 ```bash
-# Replace <YOUR_AWS_ACCOUNT_ID> with your actual AWS account number
+uv run --project destroy_essentials destroy_essentials/delete_statebucket.py
+```
+*(Alternatively, if you prefer the AWS CLI, replace `<YOUR_AWS_ACCOUNT_ID>` with your AWS account number to empty the bucket manually:)*
+```bash
 # 1. Delete all object versions
 aws s3api delete-objects \
   --bucket ccr-tfstate-bucket-001-<YOUR_AWS_ACCOUNT_ID> \
