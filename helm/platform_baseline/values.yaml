@@ -1,9 +1,9 @@
 clusterName: "complaint-responder-cluster"
+environment: "dev"
 
 karpenter:
   version: "1.13.0"
   serviceaccountname: karpenter
-  namespace: kube-system
 
 external-secrets:
   version: "2.7.0"
